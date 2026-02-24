@@ -41,3 +41,4 @@ backend/uploads/covers/*
 
 # Cache
 .cache/
+package-lock.json
