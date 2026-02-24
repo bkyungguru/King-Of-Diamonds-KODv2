@@ -32,6 +32,7 @@ from routes.vault import router as vault_router
 # Import route modules for db setup
 from routes import auth, users, creators, content, subscriptions, messages, tips, admin, uploads
 from routes import stories, livestream, ppv, vault
+from utils.uploads import init_gridfs
 
 # Set database for each route module
 auth.set_db(db)
@@ -43,6 +44,7 @@ messages.set_db(db)
 tips.set_db(db)
 admin.set_db(db)
 uploads.set_db(db)
+init_gridfs(db)
 stories.set_db(db)
 livestream.set_db(db)
 ppv.set_db(db)
@@ -80,10 +82,12 @@ async def health_check():
 app.include_router(api_router)
 
 # CORS middleware
+cors_origins = os.environ.get('CORS_ORIGINS', 'http://localhost:3000').split(',')
+cors_origins = [o.strip() for o in cors_origins if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=cors_origins if cors_origins != ['*'] else ["https://kod-frontend.onrender.com", "http://localhost:3000"],
     allow_methods=["*"],
     allow_headers=["*"],
 )

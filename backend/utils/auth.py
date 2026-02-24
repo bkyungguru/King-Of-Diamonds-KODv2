@@ -2,10 +2,12 @@ import bcrypt
 import os
 from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError
-from fastapi import HTTPException, Depends, status
+from fastapi import HTTPException, Depends, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-JWT_SECRET = os.environ.get('JWT_SECRET', 'fallback_secret_key')
+JWT_SECRET = os.environ.get('JWT_SECRET')
+if not JWT_SECRET:
+    raise RuntimeError("JWT_SECRET environment variable is not set")
 JWT_ALGORITHM = os.environ.get('JWT_ALGORITHM', 'HS256')
 JWT_EXPIRATION_HOURS = int(os.environ.get('JWT_EXPIRATION_HOURS', 24))
 
@@ -48,6 +50,18 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     token = credentials.credentials
     payload = decode_token(token)
     return payload
+
+async def get_current_user_optional(request: Request) -> dict | None:
+    """Get current user from JWT token, returns None if no auth or auth fails"""
+    auth_header = request.headers.get("authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return None
+    try:
+        token = auth_header.split(" ", 1)[1]
+        payload = decode_token(token)
+        return payload
+    except Exception:
+        return None
 
 def require_role(*roles: str):
     """Decorator to require specific roles"""

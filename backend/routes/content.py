@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from models.content import Content, ContentCreate, ContentUpdate, ContentResponse
-from utils.auth import get_current_user
+from utils.auth import get_current_user, get_current_user_optional
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -183,7 +183,7 @@ async def get_public_content(skip: int = 0, limit: int = 20):
     return result
 
 @router.get("/creator/{creator_id}", response_model=List[ContentResponse])
-async def get_creator_content(creator_id: str, skip: int = 0, limit: int = 20, current_user: Optional[dict] = None):
+async def get_creator_content(creator_id: str, skip: int = 0, limit: int = 20, current_user: Optional[dict] = Depends(get_current_user_optional)):
     """Get content from a specific creator"""
     # Check if user is subscribed
     is_subscribed = False
@@ -328,20 +328,4 @@ async def react_to_content(content_id: str, reaction_type: Optional[str] = None,
         "reaction_counts": updated.get('reaction_counts', {})
     }
 
-@router.delete("/{content_id}")
-async def delete_content(content_id: str, current_user: dict = Depends(get_current_user)):
-    """Delete content (creator only)"""
-    # Get creator profile
-    creator = await db.creators.find_one({"user_id": current_user['user_id']}, {"_id": 0})
-    if not creator:
-        raise HTTPException(status_code=403, detail="Must be a creator")
-    
-    # Check if content belongs to creator
-    content = await db.content.find_one({"id": content_id, "creator_id": creator['id']}, {"_id": 0})
-    if not content:
-        raise HTTPException(status_code=404, detail="Content not found or not authorized")
-    
-    # Soft delete
-    await db.content.update_one({"id": content_id}, {"$set": {"is_active": False}})
-    
-    return {"message": "Content deleted"}
+# duplicate delete route removed

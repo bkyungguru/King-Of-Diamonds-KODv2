@@ -59,9 +59,7 @@ export const SettingsPage = () => {
         formData.append('file', blob, 'avatar.jpg');
 
         try {
-            await api().post('/uploads/avatar', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' }
-            });
+            await api().post('/uploads/avatar', formData);
             toast.success('Avatar updated!');
             await refreshUser();
         } catch (error) {
@@ -74,9 +72,7 @@ export const SettingsPage = () => {
         formData.append('file', blob, 'profile.jpg');
 
         try {
-            await api().post('/uploads/profile', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' }
-            });
+            await api().post('/uploads/profile', formData);
             toast.success('Profile image updated!');
             await refreshUser();
         } catch (error) {
@@ -89,9 +85,7 @@ export const SettingsPage = () => {
         formData.append('file', blob, 'cover.jpg');
 
         try {
-            await api().post('/uploads/cover', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' }
-            });
+            await api().post('/uploads/cover', formData);
             toast.success('Cover image updated!');
             await refreshUser();
         } catch (error) {

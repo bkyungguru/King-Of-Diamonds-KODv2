@@ -65,4 +65,5 @@ class CreatorResponse(BaseModel):
     online_status: str = "offline"
     last_seen: Optional[datetime] = None
     schedule: Optional[dict] = None
+    total_earnings: float = 0.0
     created_at: datetime
