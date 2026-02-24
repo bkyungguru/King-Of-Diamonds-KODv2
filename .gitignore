@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Build output
+/build
+dist/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Uploads (keep directory structure, ignore user content)
+backend/uploads/avatars/*
+backend/uploads/content/*
+backend/uploads/covers/*
+!backend/uploads/avatars/.gitkeep
+!backend/uploads/content/.gitkeep
+!backend/uploads/covers/.gitkeep
+
+# Testing
+/coverage
+
+# Cache
+.cache/
