@@ -40,6 +40,10 @@ export const AdminPage = () => {
     const [selectedContent, setSelectedContent] = useState(null);
     const [contentDialogOpen, setContentDialogOpen] = useState(false);
     const [editMode, setEditMode] = useState(false);
+    const [featuredStream, setFeaturedStream] = useState(null);
+    const [streamUrl, setStreamUrl] = useState('');
+    const [streamTitle, setStreamTitle] = useState('Featured Live Stream');
+    const [streamDesc, setStreamDesc] = useState('');
 
     useEffect(() => {
         if (!isAdmin) {
@@ -57,7 +61,8 @@ export const AdminPage = () => {
                 api().get('/admin/creators'),
                 api().get('/admin/content'),
                 api().get('/admin/analytics/growth?days=14'),
-                api().get('/admin/analytics/revenue?days=14')
+                api().get('/admin/analytics/revenue?days=14'),
+                api().get('/admin/featured-stream')
             ]);
             setStats(statsRes.data);
             setUsers(usersRes.data);
@@ -65,6 +70,12 @@ export const AdminPage = () => {
             setContent(contentRes.data);
             setGrowthData(growthRes.data);
             setRevenueData(revenueRes.data);
+            if (streamRes.data.is_active && streamRes.data.stream) {
+                setFeaturedStream(streamRes.data.stream);
+                setStreamUrl(streamRes.data.stream.youtube_url || '');
+                setStreamTitle(streamRes.data.stream.title || 'Featured Live Stream');
+                setStreamDesc(streamRes.data.stream.description || '');
+            }
         } catch (error) {
             console.error('Failed to fetch admin data:', error);
             toast.error('Failed to load admin data');
@@ -134,6 +145,37 @@ export const AdminPage = () => {
         setSelectedContent(item);
         setEditMode(false);
         setContentDialogOpen(true);
+    };
+
+    const handleSetFeaturedStream = async () => {
+        if (!streamUrl.trim()) {
+            toast.error('Please enter a YouTube URL');
+            return;
+        }
+        try {
+            const res = await api().put('/admin/featured-stream', {
+                youtube_url: streamUrl,
+                title: streamTitle,
+                description: streamDesc
+            });
+            setFeaturedStream(res.data.stream);
+            toast.success('Featured stream set');
+        } catch (error) {
+            toast.error(error.response?.data?.detail || 'Failed to set featured stream');
+        }
+    };
+
+    const handleClearFeaturedStream = async () => {
+        try {
+            await api().delete('/admin/featured-stream');
+            setFeaturedStream(null);
+            setStreamUrl('');
+            setStreamTitle('Featured Live Stream');
+            setStreamDesc('');
+            toast.success('Featured stream cleared');
+        } catch (error) {
+            toast.error('Failed to clear featured stream');
+        }
     };
 
     const handleChangeRole = async (userId, newRole) => {
@@ -229,6 +271,10 @@ export const AdminPage = () => {
                         <TabsTrigger value="content" className="data-[state=active]:bg-gold data-[state=active]:text-black">
                             <FileText className="w-4 h-4 mr-2" />
                             Content
+                        </TabsTrigger>
+                        <TabsTrigger value="featured" className="data-[state=active]:bg-gold data-[state=active]:text-black">
+                            <Play className="w-4 h-4 mr-2" />
+                            Featured Stream
                         </TabsTrigger>
                     </TabsList>
 
@@ -465,6 +511,89 @@ export const AdminPage = () => {
                                 No content found
                             </div>
                         )}
+                    </TabsContent>
+                    <TabsContent value="featured">
+                        <div className="grid md:grid-cols-2 gap-6">
+                            {/* Set Stream Form */}
+                            <div className="card-luxury p-6 space-y-4">
+                                <h3 className="font-heading text-lg text-white mb-2">Set Featured Stream</h3>
+                                <p className="text-white/50 text-sm mb-4">
+                                    Paste a YouTube Live or video URL to feature it on the homepage for all users.
+                                </p>
+                                <div>
+                                    <label className="text-white/70 text-sm block mb-1">YouTube URL</label>
+                                    <input
+                                        type="text"
+                                        value={streamUrl}
+                                        onChange={(e) => setStreamUrl(e.target.value)}
+                                        className="input-luxury w-full"
+                                        placeholder="https://youtube.com/watch?v=... or https://youtu.be/..."
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-white/70 text-sm block mb-1">Title</label>
+                                    <input
+                                        type="text"
+                                        value={streamTitle}
+                                        onChange={(e) => setStreamTitle(e.target.value)}
+                                        className="input-luxury w-full"
+                                        placeholder="Featured Live Stream"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-white/70 text-sm block mb-1">Description (optional)</label>
+                                    <textarea
+                                        value={streamDesc}
+                                        onChange={(e) => setStreamDesc(e.target.value)}
+                                        className="input-luxury w-full h-20 resize-none"
+                                        placeholder="What's this stream about?"
+                                    />
+                                </div>
+                                <div className="flex gap-3">
+                                    <button onClick={handleSetFeaturedStream} className="gold-btn px-6 py-2 flex-1">
+                                        {featuredStream ? 'Update Stream' : 'Set Featured Stream'}
+                                    </button>
+                                    {featuredStream && (
+                                        <button onClick={handleClearFeaturedStream} className="px-4 py-2 border border-red-500/30 text-red-400 rounded hover:bg-red-500/10 transition-colors">
+                                            Clear
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Preview */}
+                            <div className="card-luxury p-6">
+                                <h3 className="font-heading text-lg text-white mb-4">Preview</h3>
+                                {featuredStream ? (
+                                    <div className="space-y-3">
+                                        <div className="aspect-video rounded overflow-hidden bg-black">
+                                            <iframe
+                                                src={featuredStream.embed_url}
+                                                title={featuredStream.title}
+                                                className="w-full h-full"
+                                                frameBorder="0"
+                                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                                allowFullScreen
+                                            />
+                                        </div>
+                                        <h4 className="text-white font-heading">{featuredStream.title}</h4>
+                                        {featuredStream.description && (
+                                            <p className="text-white/50 text-sm">{featuredStream.description}</p>
+                                        )}
+                                        <p className="text-white/30 text-xs">
+                                            Set: {new Date(featuredStream.set_at).toLocaleString()}
+                                        </p>
+                                    </div>
+                                ) : (
+                                    <div className="aspect-video rounded bg-obsidian flex items-center justify-center">
+                                        <div className="text-center text-white/30">
+                                            <Play className="w-12 h-12 mx-auto mb-2" />
+                                            <p>No featured stream active</p>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
                     </TabsContent>
                 </Tabs>
             </main>

@@ -307,6 +307,72 @@ async def reorder_featured_creators(creator_orders: list, current_user: dict = D
     
     return {"message": "Featured creators reordered"}
 
+class FeaturedStreamInput(BaseModel):
+    youtube_url: str
+    title: Optional[str] = "Featured Live Stream"
+    description: Optional[str] = None
+
+@router.get("/featured-stream")
+async def get_featured_stream():
+    """Get the current featured stream (public endpoint)"""
+    stream = await db.settings.find_one({"key": "featured_stream"}, {"_id": 0})
+    if not stream or not stream.get("is_active"):
+        return {"is_active": False, "stream": None}
+    return {"is_active": True, "stream": stream.get("value")}
+
+@router.put("/featured-stream")
+async def set_featured_stream(data: FeaturedStreamInput, current_user: dict = Depends(get_current_user)):
+    """Set a featured YouTube stream (admin only)"""
+    if current_user.get('role') not in ['admin', 'superadmin']:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    # Extract YouTube video ID
+    import re
+    yt_url = data.youtube_url.strip()
+    video_id = None
+    patterns = [
+        r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/|youtube\.com/live/)([a-zA-Z0-9_-]{11})',
+    ]
+    for pat in patterns:
+        m = re.search(pat, yt_url)
+        if m:
+            video_id = m.group(1)
+            break
+    
+    if not video_id:
+        raise HTTPException(status_code=400, detail="Invalid YouTube URL. Supported formats: youtube.com/watch?v=..., youtu.be/..., youtube.com/live/...")
+    
+    stream_data = {
+        "youtube_url": yt_url,
+        "video_id": video_id,
+        "embed_url": f"https://www.youtube.com/embed/{video_id}?autoplay=1",
+        "title": data.title,
+        "description": data.description,
+        "set_by": current_user['user_id'],
+        "set_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    await db.settings.update_one(
+        {"key": "featured_stream"},
+        {"$set": {"key": "featured_stream", "value": stream_data, "is_active": True}},
+        upsert=True
+    )
+    
+    return {"message": "Featured stream set", "stream": stream_data}
+
+@router.delete("/featured-stream")
+async def clear_featured_stream(current_user: dict = Depends(get_current_user)):
+    """Clear the featured stream (admin only)"""
+    if current_user.get('role') not in ['admin', 'superadmin']:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    await db.settings.update_one(
+        {"key": "featured_stream"},
+        {"$set": {"is_active": False}}
+    )
+    
+    return {"message": "Featured stream cleared"}
+
 @router.get("/analytics/growth")
 async def get_growth_analytics(days: int = 30, current_user: dict = Depends(get_current_user)):
     """Get user/creator growth over time"""

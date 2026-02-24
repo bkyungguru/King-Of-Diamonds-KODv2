@@ -1,10 +1,22 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Diamond, Crown, Star, Shield, ArrowRight, Sparkles } from 'lucide-react';
+import { Diamond, Crown, Star, Shield, ArrowRight, Sparkles, Play } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import axios from 'axios';
+
+const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export const LandingPage = () => {
     const { isAuthenticated } = useAuth();
+    const [featuredStream, setFeaturedStream] = useState(null);
+
+    useEffect(() => {
+        axios.get(`${API}/admin/featured-stream`).then(res => {
+            if (res.data.is_active && res.data.stream) {
+                setFeaturedStream(res.data.stream);
+            }
+        }).catch(() => {});
+    }, []);
 
     const features = [
         {
@@ -121,6 +133,36 @@ export const LandingPage = () => {
                     </div>
                 </div>
             </section>
+
+            {/* Featured Stream Section */}
+            {featuredStream && (
+                <section className="py-16 relative border-t border-white/5" data-testid="featured-stream-section">
+                    <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+                        <div className="text-center mb-8">
+                            <div className="inline-flex items-center gap-2 px-4 py-2 border border-red-500/30 rounded-full mb-4 animate-pulse">
+                                <div className="w-2 h-2 bg-red-500 rounded-full" />
+                                <span className="text-red-400 text-sm uppercase tracking-widest">Live Now</span>
+                            </div>
+                            <h2 className="font-heading text-3xl md:text-4xl mb-2">
+                                <span className="gold-text">{featuredStream.title}</span>
+                            </h2>
+                            {featuredStream.description && (
+                                <p className="text-white/50 max-w-xl mx-auto">{featuredStream.description}</p>
+                            )}
+                        </div>
+                        <div className="aspect-video rounded-lg overflow-hidden border border-gold/20 shadow-2xl shadow-gold/10">
+                            <iframe
+                                src={featuredStream.embed_url}
+                                title={featuredStream.title}
+                                className="w-full h-full"
+                                frameBorder="0"
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                allowFullScreen
+                            />
+                        </div>
+                    </div>
+                </section>
+            )}
 
             {/* Features Section */}
             <section className="py-24 relative" data-testid="features-section">
