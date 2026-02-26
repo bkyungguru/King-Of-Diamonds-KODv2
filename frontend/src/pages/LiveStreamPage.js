@@ -66,6 +66,7 @@ export const LiveStreamPage = () => {
     const chatPollRef = useRef(null);
     const lastChatIdRef = useRef(null);
     const wsReconnectRef = useRef(null);
+    const isStreamerRef = useRef(false);
 
     // Poll chat via REST as fallback (always active)
     const startChatPolling = useCallback(() => {
@@ -76,13 +77,15 @@ export const LiveStreamPage = () => {
                 if (response.data && Array.isArray(response.data)) {
                     setMessages(response.data);
                 }
-                // Also poll stream status
-                const streamRes = await api().get(`/livestream/${streamId}`).catch(() => null);
-                if (streamRes?.data) {
-                    setViewerCount(streamRes.data.viewer_count || 0);
-                    if (streamRes.data.status === 'ended') {
-                        setIsLive(false);
-                        toast.info('Stream has ended');
+                // Also poll stream status (viewers only — broadcaster controls their own state)
+                if (!isStreamerRef.current) {
+                    const streamRes = await api().get(`/livestream/${streamId}`).catch(() => null);
+                    if (streamRes?.data) {
+                        setViewerCount(streamRes.data.viewer_count || 0);
+                        if (streamRes.data.status === 'ended') {
+                            setIsLive(false);
+                            toast.info('Stream has ended');
+                        }
                     }
                 }
             } catch (e) {}
@@ -309,6 +312,7 @@ export const LiveStreamPage = () => {
                 const creatorRes = await api().get('/creators/me').catch(() => null);
                 if (creatorRes?.data?.id === response.data.creator_id) {
                     setIsStreamer(true);
+                    isStreamerRef.current = true;
                     connectWS('broadcaster');
                     // Start camera preview immediately so streamer can see themselves
                     try {
