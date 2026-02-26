@@ -78,6 +78,32 @@ async def update_online_status(status: str, current_user: dict = Depends(get_cur
     
     return {"message": f"Status updated to {status}"}
 
+
+@router.post("/beacon-offline")
+async def beacon_offline(data: dict):
+    """Set creator offline via sendBeacon (tab close). No auth middleware — token in body."""
+    import os
+    token = data.get('token')
+    if not token:
+        return {"ok": False}
+    try:
+        from jose import jwt as jose_jwt
+        secret = os.environ.get("JWT_SECRET", "your-secret-key")
+        payload = jose_jwt.decode(token, secret, algorithms=["HS256"])
+        user_id = payload.get('user_id')
+        if user_id:
+            await db.creators.update_one(
+                {"user_id": user_id},
+                {"$set": {
+                    "online_status": "offline",
+                    "last_seen": datetime.now(timezone.utc).isoformat()
+                }}
+            )
+    except Exception:
+        pass
+    return {"ok": True}
+
+
 @router.put("/me/schedule")
 async def update_schedule(schedule: dict, current_user: dict = Depends(get_current_user)):
     """Update creator schedule (e.g., {"monday": "9 PM EST", "friday": "8 PM EST"})"""

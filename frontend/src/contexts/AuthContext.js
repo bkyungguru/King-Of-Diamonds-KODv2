@@ -40,6 +40,8 @@ export const AuthProvider = ({ children }) => {
                 try {
                     const creatorRes = await api().get('/creators/me');
                     setCreatorProfile(creatorRes.data);
+                    // Set creator online
+                    api().put('/creators/me/status?status=online').catch(() => {});
                 } catch (e) {
                     // Creator profile doesn't exist yet - that's ok, will be created when going live
                     setCreatorProfile(null);
@@ -58,6 +60,22 @@ export const AuthProvider = ({ children }) => {
     useEffect(() => {
         fetchUser();
     }, [fetchUser]);
+
+    // Set offline when tab closes
+    useEffect(() => {
+        const handleUnload = () => {
+            const t = localStorage.getItem('kod_token');
+            if (t) {
+                const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
+                navigator.sendBeacon(
+                    `${backendUrl}/api/creators/beacon-offline`,
+                    new Blob([JSON.stringify({ token: t })], { type: 'application/json' })
+                );
+            }
+        };
+        window.addEventListener('beforeunload', handleUnload);
+        return () => window.removeEventListener('beforeunload', handleUnload);
+    }, []);
 
     const login = async (email, password) => {
         const response = await api().post('/auth/login', { email, password });
@@ -82,7 +100,11 @@ export const AuthProvider = ({ children }) => {
         return userData;
     };
 
-    const logout = () => {
+    const logout = async () => {
+        // Set creator offline before clearing token
+        try {
+            await api().put('/creators/me/status?status=offline');
+        } catch (e) {}
         localStorage.removeItem('kod_token');
         setToken(null);
         setUser(null);
