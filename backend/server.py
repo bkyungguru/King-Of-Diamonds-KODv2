@@ -98,6 +98,12 @@ app.include_router(api_router)
 # WebSocket routes (not behind /api prefix)
 app.include_router(livestream_ws_router)
 
+@app.get("/ws-test")
+async def ws_test():
+    """Debug: confirm WebSocket router is registered"""
+    ws_routes = [str(r.path) for r in app.routes if hasattr(r, 'path') and 'ws' in str(r.path)]
+    return {"ws_routes": ws_routes, "total_routes": len(app.routes)}
+
 # CORS middleware
 cors_origins = os.environ.get('CORS_ORIGINS', 'http://localhost:3000').split(',')
 cors_origins = [o.strip() for o in cors_origins if o.strip()]
