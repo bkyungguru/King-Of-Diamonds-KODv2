@@ -10,3 +10,5 @@ python-multipart==0.0.21
 email-validator==2.3.0
 starlette==0.37.2
 pillow>=10.0.0,<13.0.0
+pywebpush==2.0.1
+py-vapid==1.9.2

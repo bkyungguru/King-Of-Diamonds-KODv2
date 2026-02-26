@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Navbar } from '../components/Navbar';
 import { ImageCropper } from '../components/ImageCropper';
-import { User, Mail, Loader2, Save, LogOut, Crown, Camera } from 'lucide-react';
+import { User, Mail, Loader2, Save, LogOut, Crown, Camera, Bell } from 'lucide-react';
+import { NotificationSettings } from '../components/NotificationSettings';
 import { toast } from 'sonner';
 import { Avatar, AvatarFallback, AvatarImage } from '../components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
@@ -113,6 +114,10 @@ export const SettingsPage = () => {
                         <TabsTrigger value="profile" className="data-[state=active]:bg-gold data-[state=active]:text-black">
                             <User className="w-4 h-4 mr-2" />
                             Profile
+                        </TabsTrigger>
+                        <TabsTrigger value="notifications" className="data-[state=active]:bg-gold data-[state=active]:text-black">
+                            <Bell className="w-4 h-4 mr-2" />
+                            Notifications
                         </TabsTrigger>
                         {isCreator && (
                             <TabsTrigger value="creator" className="data-[state=active]:bg-gold data-[state=active]:text-black">
@@ -232,6 +237,12 @@ export const SettingsPage = () => {
                                 <LogOut className="w-5 h-5" />
                                 Log Out
                             </button>
+                        </div>
+                    </TabsContent>
+
+                    <TabsContent value="notifications">
+                        <div className="card-luxury p-8">
+                            <NotificationSettings />
                         </div>
                     </TabsContent>
 

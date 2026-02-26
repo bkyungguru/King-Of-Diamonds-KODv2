@@ -1,7 +1,9 @@
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Diamond, User, LogOut, LayoutDashboard, MessageSquare, Settings, Crown, Shield, Radio, Lock } from 'lucide-react';
+import { Diamond, User, LogOut, LayoutDashboard, MessageSquare, Settings, Crown, Shield, Radio, Lock, Compass, BarChart3 } from 'lucide-react';
+import { SearchBar } from './SearchBar';
+import { NotificationBell } from './NotificationBell';
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -30,8 +32,21 @@ export const Navbar = () => {
                         <span className="font-heading text-xl gold-text hidden sm:block">KING OF DIAMONDS</span>
                     </Link>
 
+                    {/* Search Bar - Desktop */}
+                    <div className="hidden md:block flex-1 max-w-md mx-4">
+                        <SearchBar />
+                    </div>
+
                     {/* Navigation Links */}
                     <div className="hidden md:flex items-center gap-8">
+                        <Link 
+                            to="/discover" 
+                            className="text-white/70 hover:text-gold transition-colors uppercase tracking-widest text-sm flex items-center gap-1"
+                            data-testid="nav-discover"
+                        >
+                            <Compass className="w-4 h-4" />
+                            Discover
+                        </Link>
                         <Link 
                             to="/explore" 
                             className="text-white/70 hover:text-gold transition-colors uppercase tracking-widest text-sm"
@@ -60,6 +75,7 @@ export const Navbar = () => {
 
                     {/* Auth Section */}
                     <div className="flex items-center gap-4">
+                        {isAuthenticated && <NotificationBell />}
                         {isAuthenticated ? (
                             <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
@@ -97,6 +113,13 @@ export const Navbar = () => {
                                         <DropdownMenuItem onClick={() => navigate('/creator/dashboard')} className="cursor-pointer" data-testid="menu-creator-dashboard">
                                             <Crown className="w-4 h-4 mr-2 text-gold" />
                                             Creator Studio
+                                        </DropdownMenuItem>
+                                    )}
+                                    
+                                    {(isCreator || isAdmin) && (
+                                        <DropdownMenuItem onClick={() => navigate('/analytics')} className="cursor-pointer" data-testid="menu-analytics">
+                                            <BarChart3 className="w-4 h-4 mr-2 text-gold" />
+                                            Analytics
                                         </DropdownMenuItem>
                                     )}
                                     

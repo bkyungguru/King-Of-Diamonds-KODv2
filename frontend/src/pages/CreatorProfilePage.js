@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Navbar } from '../components/Navbar';
-import { Crown, Users, Heart, MessageSquare, Lock, CheckCircle, Loader2, DollarSign, Edit2, Trash2, RefreshCw, Globe, X } from 'lucide-react';
+import { Crown, Users, Heart, MessageSquare, Lock, CheckCircle, Loader2, DollarSign, Edit2, Trash2, RefreshCw, Globe, X, Radio } from 'lucide-react';
 import { toast } from 'sonner';
 import axios from 'axios';
 import {
@@ -28,6 +28,7 @@ export const CreatorProfilePage = () => {
     const [tipMessage, setTipMessage] = useState('');
     const [editDialogOpen, setEditDialogOpen] = useState(false);
     const [editingContent, setEditingContent] = useState(null);
+    const [liveStream, setLiveStream] = useState(null);
     
     // Check if this is the creator viewing their own page
     const isOwnPage = creatorProfile?.id === creatorId;
@@ -44,6 +45,13 @@ export const CreatorProfilePage = () => {
             // Get content - public if not logged in
             const contentRes = await axios.get(`${API}/content/creator/${creatorId}`);
             setContent(contentRes.data);
+
+            // Check if creator is currently live
+            try {
+                const liveRes = await axios.get(`${API}/livestream/live`);
+                const creatorStream = liveRes.data.find(s => s.creator_id === creatorId);
+                setLiveStream(creatorStream || null);
+            } catch (e) {}
 
             // Check subscription status if logged in
             if (isAuthenticated) {
@@ -237,7 +245,18 @@ export const CreatorProfilePage = () => {
                     {/* Info */}
                     <div className="flex-1">
                         <div className="flex items-center gap-3 mb-2">
-                            <h1 className="font-heading text-3xl text-white">{creator.display_name}</h1>
+                            <div className="flex items-center gap-3">
+                                <h1 className="font-heading text-3xl text-white">{creator.display_name}</h1>
+                                {liveStream && (
+                                    <button
+                                        onClick={() => navigate(`/live/${liveStream.id}`)}
+                                        className="flex items-center gap-1.5 px-3 py-1 bg-red-500 text-white text-xs font-bold rounded-full animate-pulse hover:bg-red-600 transition-colors"
+                                    >
+                                        <Radio className="w-3 h-3" />
+                                        LIVE
+                                    </button>
+                                )}
+                            </div>
                             {creator.is_verified && (
                                 <CheckCircle className="w-6 h-6 text-gold" />
                             )}

@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { NotificationProvider } from './contexts/NotificationContext';
 import { Toaster } from './components/ui/sonner';
 
 // Pages
@@ -18,6 +19,9 @@ import AdminPage from './pages/AdminPage';
 import LiveStreamPage from './pages/LiveStreamPage';
 import LiveStreamsPage from './pages/LiveStreamsPage';
 import PPVPage from './pages/PPVPage';
+import SearchResultsPage from './pages/SearchResultsPage';
+import DiscoverPage from './pages/DiscoverPage';
+import AnalyticsDashboard from './pages/AnalyticsDashboard';
 
 // Protected Route Component
 const ProtectedRoute = ({ children, requireAuth = true, requireAdmin = false }) => {
@@ -67,6 +71,8 @@ function AppRoutes() {
             {/* Public Routes */}
             <Route path="/" element={<LandingPage />} />
             <Route path="/explore" element={<ExplorePage />} />
+            <Route path="/discover" element={<DiscoverPage />} />
+            <Route path="/search" element={<SearchResultsPage />} />
             <Route path="/creator/:creatorId" element={<CreatorProfilePage />} />
             <Route path="/live" element={<LiveStreamsPage />} />
             
@@ -154,6 +160,15 @@ function AppRoutes() {
                 } 
             />
             
+            <Route 
+                path="/analytics" 
+                element={
+                    <ProtectedRoute>
+                        <AnalyticsDashboard />
+                    </ProtectedRoute>
+                } 
+            />
+            
             {/* Admin Routes */}
             <Route 
                 path="/admin" 
@@ -174,6 +189,7 @@ function App() {
     return (
         <BrowserRouter>
             <AuthProvider>
+            <NotificationProvider>
                 <AppRoutes />
                 <Toaster 
                     position="top-right"
@@ -185,6 +201,7 @@ function App() {
                         }
                     }}
                 />
+            </NotificationProvider>
             </AuthProvider>
         </BrowserRouter>
     );

@@ -8,9 +8,11 @@ from .messages import router as messages_router
 from .tips import router as tips_router
 from .admin import router as admin_router
 from .uploads import router as uploads_router
+from .notifications import router as notifications_router
+from .analytics import router as analytics_router
 
 __all__ = [
     'auth_router', 'users_router', 'creators_router', 'content_router',
     'subscriptions_router', 'messages_router', 'tips_router', 'admin_router',
-    'uploads_router'
+    'uploads_router', 'notifications_router', 'analytics_router',
 ]

@@ -22,16 +22,21 @@ app = FastAPI(title="King of Diamonds API", version="2.0.0")
 from routes import (
     auth_router, users_router, creators_router, content_router,
     subscriptions_router, messages_router, tips_router, admin_router,
-    uploads_router
+    uploads_router, notifications_router
 )
 from routes.stories import router as stories_router
 from routes.livestream import router as livestream_router
+from routes.livestream_ws import router as livestream_ws_router
 from routes.ppv import router as ppv_router
 from routes.vault import router as vault_router
+from routes.analytics import router as analytics_router
+from routes.search import router as search_router
+from routes.discover import router as discover_router
 
 # Import route modules for db setup
-from routes import auth, users, creators, content, subscriptions, messages, tips, admin, uploads
-from routes import stories, livestream, ppv, vault
+from routes import auth, users, creators, content, subscriptions, messages, tips, admin, uploads, notifications
+from routes import stories, livestream, ppv, vault, analytics
+from routes import livestream_ws, search, discover
 from utils.uploads import init_gridfs
 
 # Set database for each route module
@@ -47,8 +52,13 @@ uploads.set_db(db)
 init_gridfs(db)
 stories.set_db(db)
 livestream.set_db(db)
+livestream_ws.set_db(db)
 ppv.set_db(db)
 vault.set_db(db)
+notifications.set_db(db)
+search.set_db(db)
+discover.set_db(db)
+analytics.set_db(db)
 
 # Create API router with prefix
 from fastapi import APIRouter
@@ -68,6 +78,10 @@ api_router.include_router(stories_router)
 api_router.include_router(livestream_router)
 api_router.include_router(ppv_router)
 api_router.include_router(vault_router)
+api_router.include_router(notifications_router)
+api_router.include_router(search_router)
+api_router.include_router(discover_router)
+api_router.include_router(analytics_router)
 
 # Health check
 @api_router.get("/")
@@ -80,6 +94,9 @@ async def health_check():
 
 # Include API router
 app.include_router(api_router)
+
+# WebSocket routes (not behind /api prefix)
+app.include_router(livestream_ws_router)
 
 # CORS middleware
 cors_origins = os.environ.get('CORS_ORIGINS', 'http://localhost:3000').split(',')
@@ -117,7 +134,14 @@ async def startup():
     await db.livestreams.create_index("status")
     await db.ppv_messages.create_index("recipient_id")
     await db.vault.create_index("creator_id")
+    await db.notifications.create_index([("user_id", 1), ("created_at", -1)])
+    await db.notifications.create_index([("user_id", 1), ("read", 1)])
+    await db.push_subscriptions.create_index([("user_id", 1), ("endpoint", 1)], unique=True)
+    await db.notification_preferences.create_index("user_id", unique=True)
     await db.scheduled_posts.create_index([("creator_id", 1), ("scheduled_for", 1)])
+    # Text indexes for search
+    await db.creators.create_index([("display_name", "text"), ("bio", "text"), ("tags", "text")])
+    await db.content.create_index([("title", "text"), ("text", "text")])
     logger.info("Database indexes created")
 
 @app.on_event("shutdown")

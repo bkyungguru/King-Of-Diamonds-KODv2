@@ -1,0 +1,15 @@
+export const colors = {
+  black: '#000000',
+  obsidian: '#0a0a0a',
+  gold: '#D4AF37',
+  goldLight: '#E5C76B',
+  goldDark: '#B8941E',
+  white: '#FFFFFF',
+  white70: 'rgba(255,255,255,0.7)',
+  white50: 'rgba(255,255,255,0.5)',
+  white30: 'rgba(255,255,255,0.3)',
+  white10: 'rgba(255,255,255,0.1)',
+  white05: 'rgba(255,255,255,0.05)',
+  red: '#EF4444',
+  green: '#22C55E',
+};
