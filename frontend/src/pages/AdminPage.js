@@ -263,7 +263,7 @@ export const AdminPage = () => {
                 </div>
 
                 <Tabs defaultValue="analytics" className="space-y-6">
-                    <TabsList className="bg-obsidian border border-white/10">
+                    <TabsList className="bg-obsidian border border-white/10 flex-wrap h-auto gap-1">
                         <TabsTrigger value="analytics" className="data-[state=active]:bg-gold data-[state=active]:text-black">
                             <BarChart3 className="w-4 h-4 mr-2" />
                             Analytics
