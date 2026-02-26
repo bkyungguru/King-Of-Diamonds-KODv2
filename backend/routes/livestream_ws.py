@@ -209,7 +209,18 @@ async def stream_websocket(websocket: WebSocket, stream_id: str, token: str = Qu
         logger.error(f"WebSocket error: {e}")
     finally:
         if role == "broadcaster":
-            # Broadcaster disconnected - notify viewers
+            # Broadcaster disconnected - auto-end the stream in DB
+            if db:
+                try:
+                    from bson import ObjectId
+                    await db.livestreams.update_one(
+                        {"_id": ObjectId(stream_id)},
+                        {"$set": {"status": "ended"}}
+                    )
+                    logger.info(f"Auto-ended stream {stream_id} (broadcaster disconnected)")
+                except Exception as e:
+                    logger.error(f"Failed to auto-end stream: {e}")
+            # Notify viewers
             if stream_id in rooms:
                 for viewer_ws in list(room.viewers.values()):
                     try:

@@ -150,10 +150,21 @@ async def get_live_streams():
 
 @router.get("/{stream_id}", response_model=LiveStreamResponse)
 async def get_stream(stream_id: str):
-    """Get stream details"""
+    """Get stream details. Auto-cleans stale 'live' streams if broadcaster is gone."""
     stream = await db.livestreams.find_one({"id": stream_id}, {"_id": 0})
     if not stream:
         raise HTTPException(status_code=404, detail="Stream not found")
+    
+    # Stale stream cleanup: if status is 'live' but no broadcaster connected, mark ended
+    if stream.get('status') == 'live':
+        from routes.livestream_ws import rooms
+        room = rooms.get(stream_id)
+        if not room or not room.broadcaster:
+            await db.livestreams.update_one(
+                {"id": stream_id},
+                {"$set": {"status": "ended"}}
+            )
+            stream['status'] = 'ended'
     
     if isinstance(stream.get('created_at'), str):
         stream['created_at'] = datetime.fromisoformat(stream['created_at'])
