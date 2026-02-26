@@ -35,6 +35,7 @@ export const CreatorDashboardPage = () => {
     });
     const [newStory, setNewStory] = useState({ media_url: '', caption: '' });
     const [newStream, setNewStream] = useState({ title: '', description: '' });
+    const [activeStream, setActiveStream] = useState(null);
     const [onlineStatus, setOnlineStatus] = useState('offline');
     const [posting, setPosting] = useState(false);
 
@@ -60,6 +61,12 @@ export const CreatorDashboardPage = () => {
             setContent(contentRes.data);
             setTips(tipsRes.data);
             setStories(storiesRes.data);
+            // Check for active streams
+            try {
+                const liveRes = await api().get('/livestream/live');
+                const myStream = liveRes.data?.find(s => s.creator_id === creatorProfile?.id);
+                setActiveStream(myStream || null);
+            } catch (e) { setActiveStream(null); }
         } catch (error) {
             console.error('Failed to fetch data:', error);
         } finally {
@@ -274,14 +281,41 @@ export const CreatorDashboardPage = () => {
                         </div>
                     </div>
                     <div className="flex flex-wrap gap-3">
-                        <button
-                            onClick={() => setGoLiveDialogOpen(true)}
-                            className="px-5 py-3 bg-red-500 text-white font-bold flex items-center gap-2 hover:bg-red-600 transition-colors"
-                            data-testid="go-live-btn"
-                        >
-                            <Radio className="w-5 h-5" />
-                            Go Live
-                        </button>
+                        {activeStream ? (
+                            <>
+                                <button
+                                    onClick={() => navigate(`/live/${activeStream.id}`)}
+                                    className="px-5 py-3 bg-red-500 text-white font-bold flex items-center gap-2 hover:bg-red-600 transition-colors animate-pulse"
+                                >
+                                    <Radio className="w-5 h-5" />
+                                    🔴 Live Now
+                                </button>
+                                <button
+                                    onClick={async () => {
+                                        try {
+                                            await api().post(`/livestream/${activeStream.id}/end`);
+                                            setActiveStream(null);
+                                            toast.success('Stream ended');
+                                        } catch (e) {
+                                            toast.error('Failed to end stream');
+                                        }
+                                    }}
+                                    className="px-5 py-3 bg-white/10 border border-red-500/50 text-red-400 font-bold flex items-center gap-2 hover:bg-red-500/20 transition-colors"
+                                >
+                                    <X className="w-5 h-5" />
+                                    Stop Stream
+                                </button>
+                            </>
+                        ) : (
+                            <button
+                                onClick={() => setGoLiveDialogOpen(true)}
+                                className="px-5 py-3 bg-red-500 text-white font-bold flex items-center gap-2 hover:bg-red-600 transition-colors"
+                                data-testid="go-live-btn"
+                            >
+                                <Radio className="w-5 h-5" />
+                                Go Live
+                            </button>
+                        )}
                         <button
                             onClick={() => setStoryDialogOpen(true)}
                             className="btn-secondary px-5 py-3 flex items-center gap-2"
