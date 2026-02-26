@@ -111,32 +111,29 @@ async def ws_test():
         ws_lib = "NOT INSTALLED"
     return {"ws_routes": ws_routes, "total_routes": len(app.routes), "websockets_lib": ws_lib}
 
-# CORS middleware
-cors_origins = os.environ.get('CORS_ORIGINS', 'http://localhost:3000,https://kod-frontend.onrender.com').split(',')
-cors_origins = [o.strip() for o in cors_origins if o.strip()]
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # Maintenance mode middleware — blocks non-admin users when enabled
+# NOTE: Added BEFORE CORSMiddleware so it runs AFTER CORS in the stack
+# (Starlette processes middlewares in reverse add order)
 class MaintenanceMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
-        # Skip for health, login, register, maintenance status, and public endpoints
+        # Always pass through OPTIONS (CORS preflight)
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         path = request.url.path
+        # Skip health, auth, maintenance status, and non-API endpoints
         if path in ("/api/", "/api/health", "/ws-test") or \
            path == "/api/auth/login" or path == "/api/auth/register" or \
            path == "/api/admin/maintenance" or \
            not path.startswith("/api/"):
             return await call_next(request)
 
-        # Check if maintenance mode is on
-        setting = await db.settings.find_one({"key": "maintenance_mode"}, {"_id": 0})
+        try:
+            setting = await db.settings.find_one({"key": "maintenance_mode"}, {"_id": 0})
+        except Exception:
+            return await call_next(request)
+
         if setting and setting.get("value", {}).get("enabled"):
-            # Check if request has auth token and if user is admin
             auth_header = request.headers.get("authorization", "")
             if auth_header.startswith("Bearer "):
                 try:
@@ -146,16 +143,28 @@ class MaintenanceMiddleware(BaseHTTPMiddleware):
                         return await call_next(request)
                 except Exception:
                     pass
-            # Block non-admin users
             msg = setting.get("value", {}).get("message", "Platform is under maintenance.")
             return JSONResponse(
                 status_code=503,
-                content={"detail": msg, "maintenance": True}
+                content={"detail": msg, "maintenance": True},
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Credentials": "true",
+                }
             )
 
         return await call_next(request)
 
 app.add_middleware(MaintenanceMiddleware)
+
+# CORS middleware — added AFTER MaintenanceMiddleware so it wraps it (runs first in stack)
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Configure logging
 logging.basicConfig(
