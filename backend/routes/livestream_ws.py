@@ -15,7 +15,6 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from typing import Dict, Set
 import json
 import logging
-import jwt
 import os
 
 logger = logging.getLogger(__name__)
@@ -26,6 +25,17 @@ db = None
 def set_db(database):
     global db
     db = database
+
+
+def decode_jwt(token: str) -> dict | None:
+    """Decode JWT using python-jose (same lib as auth)."""
+    try:
+        from jose import jwt as jose_jwt
+        secret = os.environ.get("JWT_SECRET", "your-secret-key")
+        payload = jose_jwt.decode(token, secret, algorithms=["HS256"])
+        return payload
+    except Exception:
+        return None
 
 
 # Per-stream state
@@ -49,16 +59,6 @@ def get_or_create_room(stream_id: str) -> StreamRoom:
     if stream_id not in rooms:
         rooms[stream_id] = StreamRoom(stream_id)
     return rooms[stream_id]
-
-
-def decode_token(token: str) -> dict | None:
-    """Decode JWT token to get user info."""
-    try:
-        secret = os.environ.get("JWT_SECRET", "your-secret-key")
-        payload = jwt.decode(token, secret, algorithms=["HS256"])
-        return payload
-    except Exception:
-        return None
 
 
 async def broadcast_viewer_count(room: StreamRoom):
@@ -105,7 +105,7 @@ async def stream_websocket(websocket: WebSocket, stream_id: str, token: str = Qu
         await websocket.close(code=4001, reason="Missing token")
         return
 
-    user_data = decode_token(token)
+    user_data = decode_jwt(token)
     if not user_data:
         await websocket.close(code=4001, reason="Invalid token")
         return
