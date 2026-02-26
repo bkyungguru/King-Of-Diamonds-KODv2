@@ -155,24 +155,8 @@ async def get_stream(stream_id: str):
     if not stream:
         raise HTTPException(status_code=404, detail="Stream not found")
     
-    # Stale stream cleanup: if status is 'live' but no broadcaster connected for >2 min, mark ended
-    if stream.get('status') == 'live':
-        from routes.livestream_ws import rooms
-        room = rooms.get(stream_id)
-        if not room or not room.broadcaster:
-            # Only auto-end if stream has been live for over 2 minutes (grace period for reconnects)
-            started_at = stream.get('started_at')
-            if started_at:
-                if isinstance(started_at, str):
-                    started_at = datetime.fromisoformat(started_at)
-                from datetime import timezone as tz
-                elapsed = (datetime.now(tz.utc) - started_at.replace(tzinfo=tz.utc)).total_seconds()
-                if elapsed > 120:  # 2 minute grace period
-                    await db.livestreams.update_one(
-                        {"id": stream_id},
-                        {"$set": {"status": "ended"}}
-                    )
-                    stream['status'] = 'ended'
+    # Note: stale stream cleanup is handled by WebSocket disconnect handler in livestream_ws.py
+    # No cleanup here — avoids race conditions when broadcaster is still connecting
     
     if isinstance(stream.get('created_at'), str):
         stream['created_at'] = datetime.fromisoformat(stream['created_at'])

@@ -557,8 +557,7 @@ export const LiveStreamPage = () => {
                                                 autoPlay
                                                 muted
                                                 playsInline
-                                                className="w-full h-full object-cover mirror"
-                                                style={{ transform: 'scaleX(-1)' }}
+                                                className="w-full h-full object-cover"
                                             />
                                             <span className="absolute top-2 left-2 flex items-center gap-1 px-2 py-0.5 bg-red-500 text-white text-xs font-bold rounded-full animate-pulse">
                                                 <Radio className="w-2.5 h-2.5" /> LIVE
@@ -622,7 +621,6 @@ export const LiveStreamPage = () => {
                                             muted
                                             playsInline
                                             className="w-96 h-72 lg:w-[480px] lg:h-[360px] rounded-xl object-cover border-2 border-white/10 mb-6"
-                                            style={{ transform: 'scaleX(-1)' }}
                                         />
                                         <Video className="w-12 h-12 text-gold/50 mb-4" />
                                         <p className="text-white/70 mb-6">Ready to go live?</p>
