@@ -77,6 +77,44 @@ export const AuthProvider = ({ children }) => {
         return () => window.removeEventListener('beforeunload', handleUnload);
     }, []);
 
+    // Check maintenance mode on load — force logout non-admin users
+    useEffect(() => {
+        if (!token || !user) return;
+        if (user.role === 'admin' || user.role === 'superadmin') return;
+        
+        const checkMaintenance = async () => {
+            try {
+                const res = await axios.get(`${API}/admin/maintenance`);
+                if (res.data?.enabled) {
+                    localStorage.removeItem('kod_token');
+                    setToken(null);
+                    setUser(null);
+                    setCreatorProfile(null);
+                    window.location.href = '/login';
+                }
+            } catch (e) {}
+        };
+        checkMaintenance();
+    }, [token, user]);
+
+    // Intercept 503 maintenance responses — force logout
+    useEffect(() => {
+        const interceptor = axios.interceptors.response.use(
+            response => response,
+            error => {
+                if (error.response?.status === 503 && error.response?.data?.maintenance) {
+                    localStorage.removeItem('kod_token');
+                    setToken(null);
+                    setUser(null);
+                    setCreatorProfile(null);
+                    window.location.href = '/login';
+                }
+                return Promise.reject(error);
+            }
+        );
+        return () => axios.interceptors.response.eject(interceptor);
+    }, []);
+
     const login = async (email, password) => {
         const response = await api().post('/auth/login', { email, password });
         const { token: newToken, user: userData } = response.data;

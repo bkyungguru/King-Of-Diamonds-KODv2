@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
@@ -119,6 +121,41 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Maintenance mode middleware — blocks non-admin users when enabled
+class MaintenanceMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        # Skip for health, login, register, maintenance status, and public endpoints
+        path = request.url.path
+        if path in ("/api/", "/api/health", "/ws-test") or \
+           path == "/api/auth/login" or path == "/api/auth/register" or \
+           path == "/api/admin/maintenance" or \
+           not path.startswith("/api/"):
+            return await call_next(request)
+
+        # Check if maintenance mode is on
+        setting = await db.settings.find_one({"key": "maintenance_mode"}, {"_id": 0})
+        if setting and setting.get("value", {}).get("enabled"):
+            # Check if request has auth token and if user is admin
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.startswith("Bearer "):
+                try:
+                    from utils.auth import decode_token
+                    payload = decode_token(auth_header.split(" ", 1)[1])
+                    if payload.get("role") in ("admin", "superadmin"):
+                        return await call_next(request)
+                except Exception:
+                    pass
+            # Block non-admin users
+            msg = setting.get("value", {}).get("message", "Platform is under maintenance.")
+            return JSONResponse(
+                status_code=503,
+                content={"detail": msg, "maintenance": True}
+            )
+
+        return await call_next(request)
+
+app.add_middleware(MaintenanceMiddleware)
 
 # Configure logging
 logging.basicConfig(
