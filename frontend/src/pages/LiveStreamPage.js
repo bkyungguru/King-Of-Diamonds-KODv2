@@ -12,27 +12,21 @@ import { mediaUrl } from '../lib/media';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
 const WS_BASE = BACKEND_URL.replace(/^http/, 'ws');
 
-// Free TURN servers for NAT traversal
+// ICE servers for NAT traversal
+// STUN: free Google servers
+// TURN: self-hosted coturn on JOHNNY5
 const ICE_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' },
     {
-        urls: 'turn:openrelay.metered.ca:80',
-        username: 'openrelayproject',
-        credential: 'openrelayproject',
+        urls: 'turn:108.215.29.236:3478',
+        username: 'kodturn',
+        credential: 'KodTurn2026!',
     },
     {
-        urls: 'turn:openrelay.metered.ca:443',
-        username: 'openrelayproject',
-        credential: 'openrelayproject',
-    },
-    {
-        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-        username: 'openrelayproject',
-        credential: 'openrelayproject',
+        urls: 'turn:108.215.29.236:3478?transport=tcp',
+        username: 'kodturn',
+        credential: 'KodTurn2026!',
     },
 ];
 
