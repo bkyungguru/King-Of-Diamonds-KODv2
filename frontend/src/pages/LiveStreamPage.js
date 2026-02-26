@@ -13,18 +13,32 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000'
 const WS_BASE = BACKEND_URL.replace(/^http/, 'ws');
 
 // ICE servers for NAT traversal
-// STUN-only for now — works for ~85% of connections
-// TURN credentials loaded from env vars (set on Render when available)
+// STUN + TURN via Metered.ca cloud (free 500MB/month, no home IP exposure)
+const TURN_USERNAME = process.env.REACT_APP_TURN_USERNAME || '5a73d77e0d0b1fbc624a31b9';
+const TURN_CREDENTIAL = process.env.REACT_APP_TURN_CREDENTIAL || 'fT/cj7Bbg4LWkuLx';
 const ICE_SERVERS = [
+    { urls: 'stun:stun.relay.metered.ca:80' },
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' },
-    ...(process.env.REACT_APP_TURN_URL ? [{
-        urls: process.env.REACT_APP_TURN_URL,
-        username: process.env.REACT_APP_TURN_USERNAME || '',
-        credential: process.env.REACT_APP_TURN_CREDENTIAL || '',
-    }] : []),
+    {
+        urls: 'turn:global.relay.metered.ca:80',
+        username: TURN_USERNAME,
+        credential: TURN_CREDENTIAL,
+    },
+    {
+        urls: 'turn:global.relay.metered.ca:80?transport=tcp',
+        username: TURN_USERNAME,
+        credential: TURN_CREDENTIAL,
+    },
+    {
+        urls: 'turn:global.relay.metered.ca:443',
+        username: TURN_USERNAME,
+        credential: TURN_CREDENTIAL,
+    },
+    {
+        urls: 'turns:global.relay.metered.ca:443?transport=tcp',
+        username: TURN_USERNAME,
+        credential: TURN_CREDENTIAL,
+    },
 ];
 
 export const LiveStreamPage = () => {
