@@ -428,76 +428,120 @@ export const LiveStreamPage = () => {
                     </div>
 
                     {/* Video Container */}
-                    <div className="flex-1 relative bg-obsidian flex items-center justify-center">
+                    <div className="flex-1 relative bg-obsidian flex items-center justify-center overflow-hidden">
                         {isStreamer ? (
-                            <video
-                                ref={localVideoRef}
-                                autoPlay
-                                muted
-                                playsInline
-                                className="w-full h-full object-contain"
-                            />
+                            /* BROADCASTER VIEW: Small camera preview + stream dashboard */
+                            <div className="w-full h-full flex flex-col items-center justify-center p-6">
+                                {isLive && (
+                                    <>
+                                        {/* Small camera preview */}
+                                        <div className="relative w-64 h-48 rounded-xl overflow-hidden border-2 border-gold/40 shadow-lg mb-6">
+                                            <video
+                                                ref={localVideoRef}
+                                                autoPlay
+                                                muted
+                                                playsInline
+                                                className="w-full h-full object-cover"
+                                            />
+                                            <span className="absolute top-2 left-2 flex items-center gap-1 px-2 py-0.5 bg-red-500 text-white text-xs font-bold rounded-full animate-pulse">
+                                                <Radio className="w-2.5 h-2.5" /> LIVE
+                                            </span>
+                                        </div>
+
+                                        {/* Stream Stats Dashboard */}
+                                        <div className="grid grid-cols-3 gap-6 mb-8">
+                                            <div className="text-center">
+                                                <div className="flex items-center justify-center gap-2 text-white/50 text-sm mb-1">
+                                                    <Users className="w-4 h-4" /> Viewers
+                                                </div>
+                                                <p className="text-3xl font-bold text-white">{viewerCount}</p>
+                                            </div>
+                                            <div className="text-center">
+                                                <div className="flex items-center justify-center gap-2 text-white/50 text-sm mb-1">
+                                                    <DollarSign className="w-4 h-4" /> Tips
+                                                </div>
+                                                <p className="text-3xl font-bold text-gold">${stream?.total_tips?.toFixed(2) || '0.00'}</p>
+                                            </div>
+                                            <div className="text-center">
+                                                <div className="flex items-center justify-center gap-2 text-white/50 text-sm mb-1">
+                                                    <Send className="w-4 h-4" /> Chat
+                                                </div>
+                                                <p className="text-3xl font-bold text-white">{messages.length}</p>
+                                            </div>
+                                        </div>
+
+                                        {/* Stream Title */}
+                                        <p className="text-white/40 text-sm mb-6">{stream?.title}</p>
+
+                                        {/* Streamer Controls */}
+                                        <div className="flex items-center gap-3 bg-black/50 backdrop-blur-sm px-6 py-3 rounded-full border border-white/10">
+                                            <button
+                                                onClick={toggleMute}
+                                                className={`p-3 rounded-full transition-colors ${isMuted ? 'bg-red-500 text-white' : 'bg-white/20 text-white hover:bg-white/30'}`}
+                                                title={isMuted ? 'Unmute' : 'Mute'}
+                                            >
+                                                {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                                            </button>
+                                            <button
+                                                onClick={toggleVideo}
+                                                className={`p-3 rounded-full transition-colors ${isVideoOff ? 'bg-red-500 text-white' : 'bg-white/20 text-white hover:bg-white/30'}`}
+                                                title={isVideoOff ? 'Turn on camera' : 'Turn off camera'}
+                                            >
+                                                {isVideoOff ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
+                                            </button>
+                                            <button
+                                                onClick={endStream}
+                                                className="p-3 rounded-full bg-red-600 text-white hover:bg-red-700 transition-colors"
+                                                data-testid="end-stream-btn"
+                                                title="End Stream"
+                                            >
+                                                <PhoneOff className="w-5 h-5" />
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
+                                {!isLive && (
+                                    <>
+                                        <video
+                                            ref={localVideoRef}
+                                            autoPlay
+                                            muted
+                                            playsInline
+                                            className="w-64 h-48 rounded-xl object-cover border-2 border-white/10 mb-6"
+                                        />
+                                        <Video className="w-12 h-12 text-gold/50 mb-4" />
+                                        <p className="text-white/70 mb-6">Ready to go live?</p>
+                                        <button
+                                            onClick={startStream}
+                                            className="gold-btn px-10 py-4 text-lg flex items-center gap-3"
+                                            data-testid="start-stream-btn"
+                                        >
+                                            <Radio className="w-6 h-6" />
+                                            Go Live
+                                        </button>
+                                    </>
+                                )}
+                            </div>
                         ) : (
-                            <video
-                                ref={remoteVideoRef}
-                                autoPlay
-                                playsInline
-                                className="w-full h-full object-contain"
-                            />
-                        )}
+                            /* VIEWER VIEW: Video at reasonable size, not fullscreen */
+                            <div className="w-full h-full flex items-center justify-center p-4">
+                                <video
+                                    ref={remoteVideoRef}
+                                    autoPlay
+                                    playsInline
+                                    className="max-w-full max-h-full rounded-lg object-contain"
+                                    style={{ maxHeight: 'calc(100vh - 200px)' }}
+                                />
 
-                        {!isLive && !isStreamer && (
-                            <div className="absolute inset-0 flex items-center justify-center bg-black/80">
-                                <div className="text-center">
-                                    <Video className="w-16 h-16 text-gold/30 mx-auto mb-4" />
-                                    <p className="text-white/70 text-lg">Stream is offline</p>
-                                    <p className="text-white/40 text-sm mt-2">Waiting for the creator to go live...</p>
-                                </div>
-                            </div>
-                        )}
-
-                        {!isLive && isStreamer && (
-                            <div className="absolute inset-0 flex items-center justify-center bg-black/60">
-                                <div className="text-center">
-                                    <Video className="w-16 h-16 text-gold/50 mx-auto mb-4" />
-                                    <p className="text-white/70 mb-6">Ready to go live?</p>
-                                    <button
-                                        onClick={startStream}
-                                        className="gold-btn px-10 py-4 text-lg flex items-center gap-3 mx-auto"
-                                        data-testid="start-stream-btn"
-                                    >
-                                        <Radio className="w-6 h-6" />
-                                        Go Live
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Streamer Controls */}
-                        {isStreamer && isLive && (
-                            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-black/70 backdrop-blur-sm px-6 py-3 rounded-full">
-                                <button
-                                    onClick={toggleMute}
-                                    className={`p-3 rounded-full transition-colors ${isMuted ? 'bg-red-500 text-white' : 'bg-white/20 text-white hover:bg-white/30'}`}
-                                    title={isMuted ? 'Unmute' : 'Mute'}
-                                >
-                                    {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-                                </button>
-                                <button
-                                    onClick={toggleVideo}
-                                    className={`p-3 rounded-full transition-colors ${isVideoOff ? 'bg-red-500 text-white' : 'bg-white/20 text-white hover:bg-white/30'}`}
-                                    title={isVideoOff ? 'Turn on camera' : 'Turn off camera'}
-                                >
-                                    {isVideoOff ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
-                                </button>
-                                <button
-                                    onClick={endStream}
-                                    className="p-3 rounded-full bg-red-600 text-white hover:bg-red-700 transition-colors"
-                                    data-testid="end-stream-btn"
-                                    title="End Stream"
-                                >
-                                    <PhoneOff className="w-5 h-5" />
-                                </button>
+                                {!isLive && (
+                                    <div className="absolute inset-0 flex items-center justify-center bg-black/80">
+                                        <div className="text-center">
+                                            <Video className="w-16 h-16 text-gold/30 mx-auto mb-4" />
+                                            <p className="text-white/70 text-lg">Stream is offline</p>
+                                            <p className="text-white/40 text-sm mt-2">Waiting for the creator to go live...</p>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
