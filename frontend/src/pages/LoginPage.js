@@ -1,16 +1,26 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Diamond, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Diamond, Eye, EyeOff, Loader2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
+
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
 
 export const LoginPage = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [maintenance, setMaintenance] = useState(null);
     const { login } = useAuth();
     const navigate = useNavigate();
+
+    useEffect(() => {
+        fetch(`${BACKEND_URL}/api/admin/maintenance`)
+            .then(r => r.json())
+            .then(data => { if (data.enabled) setMaintenance(data); })
+            .catch(() => {});
+    }, []);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -47,6 +57,19 @@ export const LoginPage = () => {
                         <span className="font-heading text-2xl gold-text">KING OF DIAMONDS</span>
                     </Link>
                 </div>
+
+                {/* Maintenance Banner */}
+                {maintenance && (
+                    <div className="mb-6 p-4 rounded-lg border border-yellow-500/30 bg-yellow-500/10 animate-fade-in">
+                        <div className="flex items-center gap-3">
+                            <AlertTriangle className="w-5 h-5 text-yellow-500 flex-shrink-0" />
+                            <div>
+                                <p className="text-yellow-500 font-semibold text-sm uppercase tracking-wider">Maintenance Mode</p>
+                                <p className="text-yellow-500/70 text-sm mt-1">{maintenance.message}</p>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {/* Form Card */}
                 <div className="card-luxury p-8 animate-fade-in delay-100" data-testid="login-form-container">

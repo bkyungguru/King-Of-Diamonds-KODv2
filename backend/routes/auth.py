@@ -71,6 +71,13 @@ async def login(credentials: UserLogin):
     if not user_doc.get('is_active', True):
         raise HTTPException(status_code=403, detail="Account is disabled")
     
+    # Check maintenance mode — only admin/superadmin can login during maintenance
+    if user_doc.get('role') not in ['admin', 'superadmin']:
+        maintenance = await db.settings.find_one({"key": "maintenance_mode"}, {"_id": 0})
+        if maintenance and maintenance.get("value", {}).get("enabled"):
+            msg = maintenance.get("value", {}).get("message", "Platform is under maintenance")
+            raise HTTPException(status_code=503, detail=msg)
+    
     # Generate token
     token = create_token(user_doc['id'], user_doc['email'], user_doc['role'])
     

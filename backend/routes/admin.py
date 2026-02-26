@@ -373,6 +373,42 @@ async def clear_featured_stream(current_user: dict = Depends(get_current_user)):
     
     return {"message": "Featured stream cleared"}
 
+# ─── Maintenance Mode ───
+
+class MaintenanceInput(BaseModel):
+    enabled: bool
+    message: Optional[str] = "The platform is currently under maintenance. Please check back soon."
+
+@router.get("/maintenance")
+async def get_maintenance_status():
+    """Get maintenance mode status (public)"""
+    setting = await db.settings.find_one({"key": "maintenance_mode"}, {"_id": 0})
+    if not setting:
+        return {"enabled": False, "message": None}
+    return {"enabled": setting.get("value", {}).get("enabled", False), "message": setting.get("value", {}).get("message")}
+
+@router.put("/maintenance")
+async def set_maintenance_mode(data: MaintenanceInput, current_user: dict = Depends(get_current_user)):
+    """Toggle maintenance mode (admin only). Blocks all non-admin logins."""
+    if current_user.get('role') not in ['admin', 'superadmin']:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    await db.settings.update_one(
+        {"key": "maintenance_mode"},
+        {"$set": {
+            "key": "maintenance_mode",
+            "value": {
+                "enabled": data.enabled,
+                "message": data.message,
+                "set_by": current_user['user_id'],
+                "set_at": datetime.now(timezone.utc).isoformat()
+            }
+        }},
+        upsert=True
+    )
+    
+    return {"message": f"Maintenance mode {'enabled' if data.enabled else 'disabled'}"}
+
 @router.get("/analytics/growth")
 async def get_growth_analytics(days: int = 30, current_user: dict = Depends(get_current_user)):
     """Get user/creator growth over time"""

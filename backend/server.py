@@ -110,12 +110,12 @@ async def ws_test():
     return {"ws_routes": ws_routes, "total_routes": len(app.routes), "websockets_lib": ws_lib}
 
 # CORS middleware
-cors_origins = os.environ.get('CORS_ORIGINS', 'http://localhost:3000').split(',')
+cors_origins = os.environ.get('CORS_ORIGINS', 'http://localhost:3000,https://kod-frontend.onrender.com').split(',')
 cors_origins = [o.strip() for o in cors_origins if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=cors_origins if cors_origins != ['*'] else ["https://kod-frontend.onrender.com", "http://localhost:3000"],
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -45,6 +45,8 @@ export const AdminPage = () => {
     const [streamUrl, setStreamUrl] = useState('');
     const [streamTitle, setStreamTitle] = useState('Featured Live Stream');
     const [streamDesc, setStreamDesc] = useState('');
+    const [maintenanceMode, setMaintenanceMode] = useState(false);
+    const [maintenanceMsg, setMaintenanceMsg] = useState('The platform is currently under maintenance. Please check back soon.');
 
     useEffect(() => {
         if (!isAdmin) {
@@ -56,14 +58,15 @@ export const AdminPage = () => {
 
     const fetchAdminData = async () => {
         try {
-            const [statsRes, usersRes, creatorsRes, contentRes, growthRes, revenueRes] = await Promise.all([
+            const [statsRes, usersRes, creatorsRes, contentRes, growthRes, revenueRes, streamRes, maintRes] = await Promise.all([
                 api().get('/admin/stats'),
                 api().get('/admin/users'),
                 api().get('/admin/creators'),
                 api().get('/admin/content'),
                 api().get('/admin/analytics/growth?days=14'),
                 api().get('/admin/analytics/revenue?days=14'),
-                api().get('/admin/featured-stream')
+                api().get('/admin/featured-stream'),
+                api().get('/admin/maintenance'),
             ]);
             setStats(statsRes.data);
             setUsers(usersRes.data);
@@ -71,6 +74,10 @@ export const AdminPage = () => {
             setContent(contentRes.data);
             setGrowthData(growthRes.data);
             setRevenueData(revenueRes.data);
+            if (maintRes.data) {
+                setMaintenanceMode(maintRes.data.enabled || false);
+                if (maintRes.data.message) setMaintenanceMsg(maintRes.data.message);
+            }
             if (streamRes.data.is_active && streamRes.data.stream) {
                 setFeaturedStream(streamRes.data.stream);
                 setStreamUrl(streamRes.data.stream.youtube_url || '');
@@ -272,6 +279,9 @@ export const AdminPage = () => {
                         <TabsTrigger value="content" className="data-[state=active]:bg-gold data-[state=active]:text-black">
                             <FileText className="w-4 h-4 mr-2" />
                             Content
+                        </TabsTrigger>
+                        <TabsTrigger value="settings" className="data-[state=active]:bg-gold data-[state=active]:text-black">
+                            ⚙️ Settings
                         </TabsTrigger>
                         <TabsTrigger value="featured" className="data-[state=active]:bg-gold data-[state=active]:text-black">
                             <Play className="w-4 h-4 mr-2" />
@@ -593,6 +603,74 @@ export const AdminPage = () => {
                                         </div>
                                     </div>
                                 )}
+                            </div>
+                        </div>
+                    </TabsContent>
+
+                    <TabsContent value="settings">
+                        <div className="card-luxury p-6">
+                            <h2 className="font-heading text-xl gold-text mb-6">Platform Settings</h2>
+                            
+                            {/* Maintenance Mode */}
+                            <div className="border border-white/10 rounded-lg p-6 mb-6">
+                                <div className="flex items-center justify-between mb-4">
+                                    <div>
+                                        <h3 className="text-white font-semibold text-lg">🔧 Maintenance Mode</h3>
+                                        <p className="text-white/50 text-sm mt-1">
+                                            When enabled, only admin and superadmin accounts can log in. All other users will see a maintenance message.
+                                        </p>
+                                    </div>
+                                    <button
+                                        onClick={async () => {
+                                            try {
+                                                const newState = !maintenanceMode;
+                                                await api().put('/admin/maintenance', {
+                                                    enabled: newState,
+                                                    message: maintenanceMsg
+                                                });
+                                                setMaintenanceMode(newState);
+                                                toast.success(`Maintenance mode ${newState ? 'enabled' : 'disabled'}`);
+                                            } catch (err) {
+                                                toast.error('Failed to toggle maintenance mode');
+                                            }
+                                        }}
+                                        className={`px-6 py-3 rounded-lg font-bold transition-all ${
+                                            maintenanceMode 
+                                                ? 'bg-red-500/20 border border-red-500 text-red-400 hover:bg-red-500/30' 
+                                                : 'bg-green-500/20 border border-green-500 text-green-400 hover:bg-green-500/30'
+                                        }`}
+                                    >
+                                        {maintenanceMode ? '🔴 ACTIVE — Click to Disable' : '🟢 OFF — Click to Enable'}
+                                    </button>
+                                </div>
+                                
+                                <div>
+                                    <label className="block text-white/70 text-sm uppercase tracking-wider mb-2">
+                                        Maintenance Message
+                                    </label>
+                                    <textarea
+                                        value={maintenanceMsg}
+                                        onChange={(e) => setMaintenanceMsg(e.target.value)}
+                                        className="input-luxury w-full h-24 resize-none"
+                                        placeholder="Message shown to users during maintenance..."
+                                    />
+                                    <button
+                                        onClick={async () => {
+                                            try {
+                                                await api().put('/admin/maintenance', {
+                                                    enabled: maintenanceMode,
+                                                    message: maintenanceMsg
+                                                });
+                                                toast.success('Maintenance message updated');
+                                            } catch (err) {
+                                                toast.error('Failed to update message');
+                                            }
+                                        }}
+                                        className="mt-2 px-4 py-2 bg-white/10 border border-white/20 rounded text-white/70 hover:bg-white/20 text-sm"
+                                    >
+                                        Save Message
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </TabsContent>
