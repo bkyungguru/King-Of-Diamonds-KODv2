@@ -100,9 +100,14 @@ app.include_router(livestream_ws_router)
 
 @app.get("/ws-test")
 async def ws_test():
-    """Debug: confirm WebSocket router is registered"""
+    """Debug: confirm WebSocket router is registered and websockets lib available"""
     ws_routes = [str(r.path) for r in app.routes if hasattr(r, 'path') and 'ws' in str(r.path)]
-    return {"ws_routes": ws_routes, "total_routes": len(app.routes)}
+    try:
+        import websockets
+        ws_lib = websockets.__version__
+    except ImportError:
+        ws_lib = "NOT INSTALLED"
+    return {"ws_routes": ws_routes, "total_routes": len(app.routes), "websockets_lib": ws_lib}
 
 # CORS middleware
 cors_origins = os.environ.get('CORS_ORIGINS', 'http://localhost:3000').split(',')
