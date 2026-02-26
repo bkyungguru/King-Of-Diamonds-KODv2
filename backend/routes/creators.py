@@ -155,6 +155,11 @@ async def list_creators(skip: int = 0, limit: int = 20, tag: str = None):
             c['created_at'] = datetime.fromisoformat(c['created_at'])
         if isinstance(c.get('updated_at'), str):
             c['updated_at'] = datetime.fromisoformat(c['updated_at'])
+        # Fallback: use user avatar if no creator profile image
+        if not c.get('profile_image_url') and c.get('user_id'):
+            user = await db.users.find_one({"id": c['user_id']}, {"avatar_url": 1})
+            if user and user.get('avatar_url'):
+                c['profile_image_url'] = user['avatar_url']
         result.append(CreatorResponse(**c))
     
     return result
@@ -170,5 +175,11 @@ async def get_creator_profile(creator_id: str):
         creator_doc['created_at'] = datetime.fromisoformat(creator_doc['created_at'])
     if isinstance(creator_doc.get('updated_at'), str):
         creator_doc['updated_at'] = datetime.fromisoformat(creator_doc['updated_at'])
+    
+    # Fallback: use user avatar if no creator profile image
+    if not creator_doc.get('profile_image_url') and creator_doc.get('user_id'):
+        user = await db.users.find_one({"id": creator_doc['user_id']}, {"avatar_url": 1})
+        if user and user.get('avatar_url'):
+            creator_doc['profile_image_url'] = user['avatar_url']
     
     return CreatorResponse(**creator_doc)
