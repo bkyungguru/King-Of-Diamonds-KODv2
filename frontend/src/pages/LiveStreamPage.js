@@ -308,6 +308,16 @@ export const LiveStreamPage = () => {
                 if (creatorRes?.data?.id === response.data.creator_id) {
                     setIsStreamer(true);
                     connectWS('broadcaster');
+                    // Start camera preview immediately so streamer can see themselves
+                    try {
+                        const previewStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                        localStreamRef.current = previewStream;
+                        if (localVideoRef.current) {
+                            localVideoRef.current.srcObject = previewStream;
+                        }
+                    } catch (e) {
+                        console.error('Camera preview failed:', e);
+                    }
                 } else {
                     await api().post(`/livestream/${streamId}/join`).catch(() => {});
                     connectWS('viewer');
@@ -363,13 +373,16 @@ export const LiveStreamPage = () => {
     // Start streaming (broadcaster)
     const startStream = async () => {
         try {
-            const mediaStream = await navigator.mediaDevices.getUserMedia({
-                video: true,
-                audio: true,
-            });
-            localStreamRef.current = mediaStream;
-            if (localVideoRef.current) {
-                localVideoRef.current.srcObject = mediaStream;
+            // Reuse existing preview stream or start new one
+            if (!localStreamRef.current) {
+                const mediaStream = await navigator.mediaDevices.getUserMedia({
+                    video: true,
+                    audio: true,
+                });
+                localStreamRef.current = mediaStream;
+                if (localVideoRef.current) {
+                    localVideoRef.current.srcObject = mediaStream;
+                }
             }
 
             await api().post(`/livestream/${streamId}/start`);
