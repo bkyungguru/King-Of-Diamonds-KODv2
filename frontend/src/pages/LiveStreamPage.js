@@ -13,21 +13,18 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000'
 const WS_BASE = BACKEND_URL.replace(/^http/, 'ws');
 
 // ICE servers for NAT traversal
-// STUN: free Google servers
-// TURN: self-hosted coturn on JOHNNY5
+// STUN-only for now — works for ~85% of connections
+// TURN credentials loaded from env vars (set on Render when available)
 const ICE_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    {
-        urls: 'turn:108.215.29.236:3478',
-        username: 'kodturn',
-        credential: 'KodTurn2026!',
-    },
-    {
-        urls: 'turn:108.215.29.236:3478?transport=tcp',
-        username: 'kodturn',
-        credential: 'KodTurn2026!',
-    },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    ...(process.env.REACT_APP_TURN_URL ? [{
+        urls: process.env.REACT_APP_TURN_URL,
+        username: process.env.REACT_APP_TURN_USERNAME || '',
+        credential: process.env.REACT_APP_TURN_CREDENTIAL || '',
+    }] : []),
 ];
 
 export const LiveStreamPage = () => {
