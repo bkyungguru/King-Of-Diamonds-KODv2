@@ -2,12 +2,37 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Navbar } from '../components/Navbar';
-import { Video, VideoOff, Mic, MicOff, Users, DollarSign, Send, X, Radio, Crown, Loader2, PhoneOff } from 'lucide-react';
+import { Video, VideoOff, Mic, MicOff, Users, DollarSign, Send, X, Radio, Crown, Loader2, PhoneOff, MessageSquare } from 'lucide-react';
 import { toast } from 'sonner';
 import { Avatar, AvatarFallback, AvatarImage } from '../components/ui/avatar';
 import SimplePeer from 'simple-peer';
 
-const WS_BASE = (process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000').replace(/^http/, 'ws');
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
+const WS_BASE = BACKEND_URL.replace(/^http/, 'ws');
+
+// Free TURN servers for NAT traversal
+const ICE_SERVERS = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    {
+        urls: 'turn:openrelay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+    },
+    {
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+    },
+    {
+        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+    },
+];
 
 export const LiveStreamPage = () => {
     const { streamId } = useParams();
@@ -25,6 +50,8 @@ export const LiveStreamPage = () => {
     const [isMuted, setIsMuted] = useState(false);
     const [isVideoOff, setIsVideoOff] = useState(false);
     const [connected, setConnected] = useState(false);
+    const [wsConnected, setWsConnected] = useState(false);
+    const [connectionStatus, setConnectionStatus] = useState('connecting');
 
     // Refs
     const localVideoRef = useRef(null);
@@ -32,39 +59,88 @@ export const LiveStreamPage = () => {
     const localStreamRef = useRef(null);
     const chatContainerRef = useRef(null);
     const wsRef = useRef(null);
-    const peersRef = useRef({}); // viewer_id -> SimplePeer (broadcaster side)
-    const peerRef = useRef(null); // single peer (viewer side)
+    const peersRef = useRef({});
+    const peerRef = useRef(null);
+    const chatPollRef = useRef(null);
+    const lastChatIdRef = useRef(null);
+    const wsReconnectRef = useRef(null);
 
-    // Connect WebSocket
+    // Poll chat via REST as fallback (always active)
+    const startChatPolling = useCallback(() => {
+        if (chatPollRef.current) return;
+        chatPollRef.current = setInterval(async () => {
+            try {
+                const response = await api().get(`/livestream/${streamId}/chat`);
+                if (response.data && Array.isArray(response.data)) {
+                    setMessages(response.data);
+                }
+                // Also poll stream status
+                const streamRes = await api().get(`/livestream/${streamId}`).catch(() => null);
+                if (streamRes?.data) {
+                    setViewerCount(streamRes.data.viewer_count || 0);
+                    if (streamRes.data.status === 'ended') {
+                        setIsLive(false);
+                        toast.info('Stream has ended');
+                    }
+                }
+            } catch (e) {}
+        }, 3000);
+    }, [streamId, api]);
+
+    const stopChatPolling = useCallback(() => {
+        if (chatPollRef.current) {
+            clearInterval(chatPollRef.current);
+            chatPollRef.current = null;
+        }
+    }, []);
+
+    // Connect WebSocket with reconnection
     const connectWS = useCallback((role) => {
-        if (wsRef.current) return;
-        
+        if (wsRef.current?.readyState === WebSocket.OPEN) return;
+
         const authToken = token || localStorage.getItem('kod_token');
         if (!authToken) return;
 
         const wsUrl = `${WS_BASE}/ws/stream/${streamId}?token=${authToken}&role=${role}`;
-        const ws = new WebSocket(wsUrl);
-        wsRef.current = ws;
 
-        ws.onopen = () => {
-            console.log(`WebSocket connected as ${role}`);
-            setConnected(true);
-        };
+        try {
+            const ws = new WebSocket(wsUrl);
+            wsRef.current = ws;
+            setConnectionStatus('connecting');
 
-        ws.onmessage = (event) => {
-            const msg = JSON.parse(event.data);
-            handleSignalingMessage(msg, role);
-        };
+            ws.onopen = () => {
+                console.log(`WebSocket connected as ${role}`);
+                setWsConnected(true);
+                setConnectionStatus('connected');
+            };
 
-        ws.onclose = () => {
-            console.log('WebSocket closed');
-            setConnected(false);
-            wsRef.current = null;
-        };
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                handleSignalingMessage(msg, role);
+            };
 
-        ws.onerror = (err) => {
-            console.error('WebSocket error:', err);
-        };
+            ws.onclose = () => {
+                console.log('WebSocket closed');
+                setWsConnected(false);
+                setConnectionStatus('disconnected');
+                wsRef.current = null;
+
+                // Reconnect after 5s
+                wsReconnectRef.current = setTimeout(() => {
+                    if (document.visibilityState !== 'hidden') {
+                        connectWS(role);
+                    }
+                }, 5000);
+            };
+
+            ws.onerror = (err) => {
+                console.error('WebSocket error:', err);
+                setConnectionStatus('error');
+            };
+        } catch (e) {
+            console.error('WebSocket connection failed:', e);
+            setConnectionStatus('error');
+        }
     }, [streamId, token]);
 
     // Handle signaling messages
@@ -75,21 +151,18 @@ export const LiveStreamPage = () => {
                 break;
 
             case 'broadcaster-ready':
-                // Viewer: create peer and send offer to broadcaster
                 if (role === 'viewer') {
                     createViewerPeer();
                 }
                 break;
 
             case 'offer':
-                // Broadcaster: received offer from a viewer, create answering peer
                 if (role === 'broadcaster' && localStreamRef.current) {
                     createBroadcasterPeer(msg.viewer_id, msg.offer);
                 }
                 break;
 
             case 'answer':
-                // Viewer: received answer from broadcaster
                 if (peerRef.current && !peerRef.current.destroyed) {
                     peerRef.current.signal(msg.answer);
                 }
@@ -129,7 +202,7 @@ export const LiveStreamPage = () => {
         }
     }, []);
 
-    // Viewer: create initiator peer
+    // Viewer: create initiator peer with TURN servers
     const createViewerPeer = useCallback(() => {
         if (peerRef.current) {
             peerRef.current.destroy();
@@ -138,6 +211,7 @@ export const LiveStreamPage = () => {
         const peer = new SimplePeer({
             initiator: true,
             trickle: true,
+            config: { iceServers: ICE_SERVERS },
         });
 
         peer.on('signal', (data) => {
@@ -150,6 +224,7 @@ export const LiveStreamPage = () => {
 
         peer.on('stream', (remoteStream) => {
             console.log('Received remote stream');
+            setConnected(true);
             if (remoteVideoRef.current) {
                 remoteVideoRef.current.srcObject = remoteStream;
             }
@@ -157,18 +232,19 @@ export const LiveStreamPage = () => {
 
         peer.on('error', (err) => {
             console.error('Peer error:', err);
+            setConnected(false);
         });
 
         peer.on('close', () => {
             console.log('Peer closed');
+            setConnected(false);
         });
 
         peerRef.current = peer;
     }, []);
 
-    // Broadcaster: create answering peer for a viewer
+    // Broadcaster: create answering peer for a viewer with TURN servers
     const createBroadcasterPeer = useCallback((viewerId, offer) => {
-        // Cleanup existing peer for this viewer
         if (peersRef.current[viewerId]) {
             peersRef.current[viewerId].destroy();
         }
@@ -177,6 +253,7 @@ export const LiveStreamPage = () => {
             initiator: false,
             trickle: true,
             stream: localStreamRef.current,
+            config: { iceServers: ICE_SERVERS },
         });
 
         peer.on('signal', (data) => {
@@ -203,7 +280,6 @@ export const LiveStreamPage = () => {
             delete peersRef.current[viewerId];
         });
 
-        // Signal the offer
         peer.signal(offer);
         peersRef.current[viewerId] = peer;
     }, []);
@@ -228,16 +304,17 @@ export const LiveStreamPage = () => {
                 setViewerCount(response.data.viewer_count);
                 setIsLive(response.data.status === 'live');
 
-                // Check if current user is the streamer
                 const creatorRes = await api().get('/creators/me').catch(() => null);
                 if (creatorRes?.data?.id === response.data.creator_id) {
                     setIsStreamer(true);
                     connectWS('broadcaster');
                 } else {
-                    // Join as viewer
                     await api().post(`/livestream/${streamId}/join`).catch(() => {});
                     connectWS('viewer');
                 }
+
+                // Always start REST chat polling as fallback
+                startChatPolling();
             } catch (error) {
                 toast.error('Stream not found');
                 navigate('/live');
@@ -250,12 +327,16 @@ export const LiveStreamPage = () => {
 
         return () => {
             cleanupPeers();
+            stopChatPolling();
             if (localStreamRef.current) {
                 localStreamRef.current.getTracks().forEach(t => t.stop());
             }
             if (wsRef.current) {
                 wsRef.current.close();
                 wsRef.current = null;
+            }
+            if (wsReconnectRef.current) {
+                clearTimeout(wsReconnectRef.current);
             }
         };
     }, [streamId]);
@@ -300,18 +381,14 @@ export const LiveStreamPage = () => {
         }
     };
 
-    // End streaming
     const endStream = async () => {
         try {
-            // Signal end via WebSocket
             wsRef.current?.send(JSON.stringify({ type: 'end-stream' }));
-
             if (localStreamRef.current) {
                 localStreamRef.current.getTracks().forEach(t => t.stop());
                 localStreamRef.current = null;
             }
             cleanupPeers();
-
             await api().post(`/livestream/${streamId}/end`);
             toast.success('Stream ended');
             navigate('/creator/dashboard');
@@ -320,7 +397,6 @@ export const LiveStreamPage = () => {
         }
     };
 
-    // Toggle mute
     const toggleMute = () => {
         if (localStreamRef.current) {
             const audioTrack = localStreamRef.current.getAudioTracks()[0];
@@ -331,7 +407,6 @@ export const LiveStreamPage = () => {
         }
     };
 
-    // Toggle video
     const toggleVideo = () => {
         if (localStreamRef.current) {
             const videoTrack = localStreamRef.current.getVideoTracks()[0];
@@ -342,33 +417,43 @@ export const LiveStreamPage = () => {
         }
     };
 
-    // Send chat via WebSocket
-    const sendMessage = () => {
-        if (!newMessage.trim() || !wsRef.current) return;
+    // Send chat — try WebSocket first, fall back to REST
+    const sendMessage = async () => {
+        if (!newMessage.trim()) return;
 
-        wsRef.current.send(JSON.stringify({
-            type: 'chat',
+        const chatMsg = {
             username: user?.display_name || user?.username || 'User',
             message: newMessage,
-        }));
+        };
 
-        // Also persist to backend
-        api().post(`/livestream/${streamId}/chat?message=${encodeURIComponent(newMessage)}`).catch(() => {});
+        // Try WebSocket
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: 'chat', ...chatMsg }));
+        }
+
+        // Always persist to REST (ensures it works even if WS is down)
+        try {
+            await api().post(`/livestream/${streamId}/chat?message=${encodeURIComponent(newMessage)}`);
+        } catch (e) {
+            console.error('Failed to send chat:', e);
+        }
+
         setNewMessage('');
     };
 
-    // Send tip
     const sendTip = async () => {
         try {
             await api().post(`/livestream/${streamId}/tip?amount=${tipAmount}`);
 
-            // Broadcast tip via WebSocket
-            wsRef.current?.send(JSON.stringify({
-                type: 'chat',
-                username: user?.display_name || user?.username || 'User',
-                message: `Sent a $${tipAmount.toFixed(2)} tip! 💰`,
-                tip_amount: tipAmount,
-            }));
+            const tipMsg = `Sent a $${tipAmount.toFixed(2)} tip! 💰`;
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+                wsRef.current.send(JSON.stringify({
+                    type: 'chat',
+                    username: user?.display_name || user?.username || 'User',
+                    message: tipMsg,
+                    tip_amount: tipAmount,
+                }));
+            }
 
             toast.success(`Sent $${tipAmount} tip!`);
             setShowTipModal(false);
@@ -393,48 +478,49 @@ export const LiveStreamPage = () => {
                 {/* Video Area */}
                 <div className="flex-1 flex flex-col min-w-0">
                     {/* Stream Header */}
-                    <div className="p-4 border-b border-white/10 flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                            <Avatar className="w-10 h-10 border border-gold/30">
+                    <div className="p-3 border-b border-white/10 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <Avatar className="w-8 h-8 border border-gold/30">
                                 <AvatarImage src={stream?.creator_profile_image} />
-                                <AvatarFallback className="bg-obsidian text-gold">
+                                <AvatarFallback className="bg-obsidian text-gold text-xs">
                                     {stream?.creator_display_name?.[0]}
                                 </AvatarFallback>
                             </Avatar>
                             <div>
-                                <h1 className="text-white font-medium">{stream?.title}</h1>
-                                <p className="text-white/50 text-sm">{stream?.creator_display_name}</p>
+                                <h1 className="text-white font-medium text-sm">{stream?.title}</h1>
+                                <p className="text-white/50 text-xs">{stream?.creator_display_name}</p>
                             </div>
                             {isLive && (
-                                <span className="flex items-center gap-2 px-3 py-1 bg-red-500 text-white text-xs font-bold rounded-full animate-pulse">
-                                    <Radio className="w-3 h-3" />
+                                <span className="flex items-center gap-1.5 px-2 py-0.5 bg-red-500 text-white text-xs font-bold rounded-full animate-pulse">
+                                    <Radio className="w-2.5 h-2.5" />
                                     LIVE
                                 </span>
                             )}
                         </div>
-                        <div className="flex items-center gap-4">
-                            <span className="flex items-center gap-2 text-white/70">
-                                <Users className="w-4 h-4" />
+                        <div className="flex items-center gap-3 text-sm">
+                            <span className="flex items-center gap-1.5 text-white/70">
+                                <Users className="w-3.5 h-3.5" />
                                 {viewerCount}
                             </span>
-                            <span className="flex items-center gap-2 text-gold">
-                                <DollarSign className="w-4 h-4" />
+                            <span className="flex items-center gap-1.5 text-gold">
+                                <DollarSign className="w-3.5 h-3.5" />
                                 ${stream?.total_tips?.toFixed(2) || '0.00'}
                             </span>
-                            {connected && (
-                                <span className="w-2 h-2 rounded-full bg-green-500" title="Connected" />
-                            )}
+                            <span className={`w-2 h-2 rounded-full ${
+                                connectionStatus === 'connected' ? 'bg-green-500' :
+                                connectionStatus === 'connecting' ? 'bg-yellow-500 animate-pulse' :
+                                'bg-red-500'
+                            }`} title={`Connection: ${connectionStatus}`} />
                         </div>
                     </div>
 
                     {/* Video Container */}
                     <div className="flex-1 relative bg-obsidian flex items-center justify-center overflow-hidden">
                         {isStreamer ? (
-                            /* BROADCASTER VIEW: Small camera preview + stream dashboard */
+                            /* BROADCASTER VIEW */
                             <div className="w-full h-full flex flex-col items-center justify-center p-6">
                                 {isLive && (
                                     <>
-                                        {/* Small camera preview */}
                                         <div className="relative w-64 h-48 rounded-xl overflow-hidden border-2 border-gold/40 shadow-lg mb-6">
                                             <video
                                                 ref={localVideoRef}
@@ -448,7 +534,6 @@ export const LiveStreamPage = () => {
                                             </span>
                                         </div>
 
-                                        {/* Stream Stats Dashboard */}
                                         <div className="grid grid-cols-3 gap-6 mb-8">
                                             <div className="text-center">
                                                 <div className="flex items-center justify-center gap-2 text-white/50 text-sm mb-1">
@@ -464,16 +549,14 @@ export const LiveStreamPage = () => {
                                             </div>
                                             <div className="text-center">
                                                 <div className="flex items-center justify-center gap-2 text-white/50 text-sm mb-1">
-                                                    <Send className="w-4 h-4" /> Chat
+                                                    <MessageSquare className="w-4 h-4" /> Chat
                                                 </div>
                                                 <p className="text-3xl font-bold text-white">{messages.length}</p>
                                             </div>
                                         </div>
 
-                                        {/* Stream Title */}
                                         <p className="text-white/40 text-sm mb-6">{stream?.title}</p>
 
-                                        {/* Streamer Controls */}
                                         <div className="flex items-center gap-3 bg-black/50 backdrop-blur-sm px-6 py-3 rounded-full border border-white/10">
                                             <button
                                                 onClick={toggleMute}
@@ -523,7 +606,7 @@ export const LiveStreamPage = () => {
                                 )}
                             </div>
                         ) : (
-                            /* VIEWER VIEW: Video at reasonable size, not fullscreen */
+                            /* VIEWER VIEW */
                             <div className="w-full h-full flex items-center justify-center p-4">
                                 <video
                                     ref={remoteVideoRef}
@@ -542,6 +625,18 @@ export const LiveStreamPage = () => {
                                         </div>
                                     </div>
                                 )}
+
+                                {isLive && !connected && (
+                                    <div className="absolute inset-0 flex items-center justify-center bg-black/60">
+                                        <div className="text-center">
+                                            <Loader2 className="w-10 h-10 text-gold animate-spin mx-auto mb-4" />
+                                            <p className="text-white/70">Connecting to stream...</p>
+                                            <p className="text-white/40 text-xs mt-2">
+                                                {connectionStatus === 'error' ? 'Connection issue — chat still works via polling' : 'Establishing peer connection...'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
@@ -549,40 +644,40 @@ export const LiveStreamPage = () => {
 
                 {/* Chat Sidebar */}
                 <div className="w-full lg:w-80 border-t lg:border-t-0 lg:border-l border-white/10 flex flex-col h-64 lg:h-auto">
-                    <div className="p-4 border-b border-white/10 flex items-center justify-between">
-                        <h2 className="font-heading text-lg text-white">Live Chat</h2>
-                        <span className="text-white/40 text-xs">{messages.length} messages</span>
+                    <div className="p-3 border-b border-white/10 flex items-center justify-between">
+                        <h2 className="font-heading text-base text-white">Live Chat</h2>
+                        <span className="text-white/40 text-xs">{messages.length}</span>
                     </div>
 
                     {/* Messages */}
-                    <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 space-y-3">
+                    <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-3 space-y-2">
                         {messages.length === 0 && (
                             <p className="text-white/30 text-sm text-center py-8">No messages yet. Say hi! 👋</p>
                         )}
                         {messages.map((msg, i) => (
                             <div
-                                key={msg.id || i}
-                                className={`${msg.tip_amount ? 'bg-gold/20 border border-gold/30 p-3 rounded-lg' : ''}`}
+                                key={msg.id || msg._id || i}
+                                className={`${msg.tip_amount ? 'bg-gold/20 border border-gold/30 p-2 rounded-lg' : ''}`}
                             >
                                 <div className="flex items-start gap-2">
                                     <span className="text-gold text-sm font-medium shrink-0">{msg.username}</span>
                                     {msg.tip_amount && (
-                                        <span className="px-2 py-0.5 bg-gold text-black text-xs font-bold rounded">
+                                        <span className="px-1.5 py-0.5 bg-gold text-black text-xs font-bold rounded">
                                             ${msg.tip_amount}
                                         </span>
                                     )}
                                 </div>
-                                <p className="text-white/80 text-sm mt-1">{msg.message}</p>
+                                <p className="text-white/80 text-sm mt-0.5">{msg.message}</p>
                             </div>
                         ))}
                     </div>
 
                     {/* Chat Input */}
-                    <div className="p-4 border-t border-white/10">
+                    <div className="p-3 border-t border-white/10">
                         {!isStreamer && (
                             <button
                                 onClick={() => setShowTipModal(true)}
-                                className="w-full gold-btn py-2 mb-3 flex items-center justify-center gap-2"
+                                className="w-full gold-btn py-2 mb-2 flex items-center justify-center gap-2 text-sm"
                                 data-testid="tip-streamer-btn"
                             >
                                 <DollarSign className="w-4 h-4" />
