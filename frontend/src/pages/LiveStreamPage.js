@@ -104,54 +104,52 @@ export const LiveStreamPage = () => {
         }
     }, []);
 
-    // Connect WebSocket with reconnection
-    const connectWS = useCallback((role) => {
-        if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    // Signal polling ref
+    const signalPollRef = useRef(null);
+    const currentRoleRef = useRef(null);
 
-        const authToken = token || localStorage.getItem('kod_token');
-        if (!authToken) return;
+    // Send signal via REST
+    const sendSignal = useCallback(async (signal) => {
+        try {
+            await api().post(`/livestream/${streamId}/signal/send`, signal);
+        } catch (e) {
+            console.error('Signal send failed:', e);
+        }
+    }, [streamId, api]);
 
-        const wsUrl = `${WS_BASE}/ws/stream/${streamId}?token=${authToken}&role=${role}`;
+    // Connect signaling via REST polling (replaces WebSocket — Cloudflare blocks WS on Render free tier)
+    const connectWS = useCallback(async (role) => {
+        if (signalPollRef.current) return;
+        currentRoleRef.current = role;
+        setConnectionStatus('connecting');
 
         try {
-            const ws = new WebSocket(wsUrl);
-            wsRef.current = ws;
-            setConnectionStatus('connecting');
+            // Register with signaling server
+            const res = await api().post(`/livestream/${streamId}/signal/connect`);
+            console.log(`Signal connected as ${role}:`, res.data);
+            setWsConnected(true);
+            setConnectionStatus('connected');
 
-            ws.onopen = () => {
-                console.log(`WebSocket connected as ${role}`);
-                setWsConnected(true);
-                setConnectionStatus('connected');
-            };
-
-            ws.onmessage = (event) => {
-                const msg = JSON.parse(event.data);
-                handleSignalingMessage(msg, role);
-            };
-
-            ws.onclose = () => {
-                console.log('WebSocket closed');
-                setWsConnected(false);
-                setConnectionStatus('disconnected');
-                wsRef.current = null;
-
-                // Reconnect after 5s
-                wsReconnectRef.current = setTimeout(() => {
-                    if (document.visibilityState !== 'hidden') {
-                        connectWS(role);
+            // Start polling for signals
+            signalPollRef.current = setInterval(async () => {
+                try {
+                    const pollRes = await api().get(`/livestream/${streamId}/signal/poll`);
+                    const signals = pollRes.data?.signals || [];
+                    if (pollRes.data?.viewer_count !== undefined) {
+                        setViewerCount(pollRes.data.viewer_count);
                     }
-                }, 5000);
-            };
-
-            ws.onerror = (err) => {
-                console.error('WebSocket error:', err);
-                setConnectionStatus('error');
-            };
+                    for (const msg of signals) {
+                        handleSignalingMessage(msg, role);
+                    }
+                } catch (e) {}
+            }, 1000); // Poll every 1s for low-latency signaling
         } catch (e) {
-            console.error('WebSocket connection failed:', e);
+            console.error('Signal connect failed:', e);
             setConnectionStatus('error');
+            // Retry after 5s
+            wsReconnectRef.current = setTimeout(() => connectWS(role), 5000);
         }
-    }, [streamId, token]);
+    }, [streamId, api]);
 
     // Handle signaling messages
     const handleSignalingMessage = useCallback((msg, role) => {
@@ -226,9 +224,9 @@ export const LiveStreamPage = () => {
 
         peer.on('signal', (data) => {
             if (data.type === 'offer') {
-                wsRef.current?.send(JSON.stringify({ type: 'offer', offer: data }));
+                sendSignal({ type: 'offer', offer: data });
             } else if (data.candidate) {
-                wsRef.current?.send(JSON.stringify({ type: 'ice-candidate', candidate: data.candidate }));
+                sendSignal({ type: 'ice-candidate', candidate: data.candidate });
             }
         });
 
@@ -268,17 +266,9 @@ export const LiveStreamPage = () => {
 
         peer.on('signal', (data) => {
             if (data.type === 'answer') {
-                wsRef.current?.send(JSON.stringify({
-                    type: 'answer',
-                    answer: data,
-                    viewer_id: viewerId,
-                }));
+                sendSignal({ type: 'answer', answer: data, viewer_id: viewerId });
             } else if (data.candidate) {
-                wsRef.current?.send(JSON.stringify({
-                    type: 'ice-candidate',
-                    candidate: data.candidate,
-                    viewer_id: viewerId,
-                }));
+                sendSignal({ type: 'ice-candidate', candidate: data.candidate, viewer_id: viewerId });
             }
         });
 
@@ -360,13 +350,15 @@ export const LiveStreamPage = () => {
             if (localStreamRef.current) {
                 localStreamRef.current.getTracks().forEach(t => t.stop());
             }
-            if (wsRef.current) {
-                wsRef.current.close();
-                wsRef.current = null;
+            if (signalPollRef.current) {
+                clearInterval(signalPollRef.current);
+                signalPollRef.current = null;
             }
             if (wsReconnectRef.current) {
                 clearTimeout(wsReconnectRef.current);
             }
+            // Disconnect from signaling
+            api().post(`/livestream/${streamId}/signal/disconnect`).catch(() => {});
         };
     }, [streamId]);
 
@@ -422,7 +414,7 @@ export const LiveStreamPage = () => {
 
     const endStream = async () => {
         try {
-            wsRef.current?.send(JSON.stringify({ type: 'end-stream' }));
+            sendSignal({ type: 'end-stream' });
             if (localStreamRef.current) {
                 localStreamRef.current.getTracks().forEach(t => t.stop());
                 localStreamRef.current = null;
@@ -465,12 +457,7 @@ export const LiveStreamPage = () => {
             message: newMessage,
         };
 
-        // Try WebSocket
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({ type: 'chat', ...chatMsg }));
-        }
-
-        // Always persist to REST (ensures it works even if WS is down)
+        // Send via REST
         try {
             await api().post(`/livestream/${streamId}/chat?message=${encodeURIComponent(newMessage)}`);
         } catch (e) {
@@ -485,14 +472,6 @@ export const LiveStreamPage = () => {
             await api().post(`/livestream/${streamId}/tip?amount=${tipAmount}`);
 
             const tipMsg = `Sent a $${tipAmount.toFixed(2)} tip! 💰`;
-            if (wsRef.current?.readyState === WebSocket.OPEN) {
-                wsRef.current.send(JSON.stringify({
-                    type: 'chat',
-                    username: user?.display_name || user?.username || 'User',
-                    message: tipMsg,
-                    tip_amount: tipAmount,
-                }));
-            }
 
             toast.success(`Sent $${tipAmount} tip!`);
             setShowTipModal(false);

@@ -308,3 +308,137 @@ async def tip_during_stream(stream_id: str, amount: float, message: str = None, 
     await db.stream_chat.insert_one(chat_dict)
     
     return {"message": "Tip sent!", "amount": amount}
+
+
+# ─── REST-based WebRTC Signaling (Cloudflare blocks WebSocket on Render free tier) ───
+
+# In-memory signal queues per stream
+# Structure: { stream_id: { "broadcaster_signals": [...], "viewer_signals": { viewer_id: [...] }, "broadcaster_connected": bool } }
+_signal_rooms = {}
+
+def _get_room(stream_id):
+    if stream_id not in _signal_rooms:
+        _signal_rooms[stream_id] = {
+            "broadcaster_signals": [],
+            "viewer_signals": {},
+            "broadcaster_connected": False,
+            "viewers": set(),
+        }
+    return _signal_rooms[stream_id]
+
+
+@router.post("/{stream_id}/signal/connect")
+async def signal_connect(stream_id: str, current_user: dict = Depends(get_current_user)):
+    """Connect to signaling as broadcaster or viewer. Returns role assignment."""
+    stream = await db.livestreams.find_one({"id": stream_id}, {"_id": 0})
+    if not stream:
+        raise HTTPException(status_code=404, detail="Stream not found")
+    
+    user_id = current_user['user_id']
+    room = _get_room(stream_id)
+    
+    is_broadcaster = (stream.get('creator_id') == user_id) or \
+                     (await db.creators.find_one({"user_id": user_id, "id": stream.get('creator_id')})) is not None
+    
+    # Check by creator profile
+    if not is_broadcaster:
+        creator = await db.creators.find_one({"user_id": user_id}, {"_id": 0})
+        if creator and creator.get('id') == stream.get('creator_id'):
+            is_broadcaster = True
+    
+    if is_broadcaster:
+        room["broadcaster_connected"] = True
+        # Notify all existing viewers that broadcaster is ready
+        for vid in room["viewers"]:
+            if vid not in room["viewer_signals"]:
+                room["viewer_signals"][vid] = []
+            room["viewer_signals"][vid].append({"type": "broadcaster-ready"})
+        return {"role": "broadcaster", "viewer_count": len(room["viewers"])}
+    else:
+        room["viewers"].add(user_id)
+        if user_id not in room["viewer_signals"]:
+            room["viewer_signals"][user_id] = []
+        # If broadcaster already connected, tell this viewer
+        if room["broadcaster_connected"]:
+            room["viewer_signals"][user_id].append({"type": "broadcaster-ready"})
+        return {"role": "viewer", "broadcaster_ready": room["broadcaster_connected"]}
+
+
+@router.post("/{stream_id}/signal/send")
+async def signal_send(stream_id: str, signal: dict, current_user: dict = Depends(get_current_user)):
+    """Send a signaling message (offer/answer/ice-candidate)."""
+    user_id = current_user['user_id']
+    room = _get_room(stream_id)
+    msg_type = signal.get("type")
+    
+    if msg_type == "offer":
+        # Viewer sends offer -> queue for broadcaster
+        room["broadcaster_signals"].append({
+            "type": "offer",
+            "offer": signal.get("offer"),
+            "viewer_id": user_id,
+        })
+    elif msg_type == "answer":
+        # Broadcaster sends answer -> queue for specific viewer
+        viewer_id = signal.get("viewer_id")
+        if viewer_id:
+            if viewer_id not in room["viewer_signals"]:
+                room["viewer_signals"][viewer_id] = []
+            room["viewer_signals"][viewer_id].append({
+                "type": "answer",
+                "answer": signal.get("answer"),
+            })
+    elif msg_type == "ice-candidate":
+        candidate = signal.get("candidate")
+        target_viewer = signal.get("viewer_id")
+        if target_viewer:
+            # Broadcaster sending ICE to viewer
+            if target_viewer not in room["viewer_signals"]:
+                room["viewer_signals"][target_viewer] = []
+            room["viewer_signals"][target_viewer].append({
+                "type": "ice-candidate",
+                "candidate": candidate,
+            })
+        else:
+            # Viewer sending ICE to broadcaster
+            room["broadcaster_signals"].append({
+                "type": "ice-candidate",
+                "candidate": candidate,
+                "viewer_id": user_id,
+            })
+    
+    return {"ok": True}
+
+
+@router.get("/{stream_id}/signal/poll")
+async def signal_poll(stream_id: str, current_user: dict = Depends(get_current_user)):
+    """Poll for pending signaling messages. Returns and clears the queue."""
+    user_id = current_user['user_id']
+    room = _get_room(stream_id)
+    
+    # Check if this is the broadcaster
+    stream = await db.livestreams.find_one({"id": stream_id}, {"_id": 0})
+    is_broadcaster = False
+    if stream:
+        creator = await db.creators.find_one({"user_id": user_id}, {"_id": 0})
+        if creator and creator.get('id') == stream.get('creator_id'):
+            is_broadcaster = True
+    
+    if is_broadcaster:
+        signals = room["broadcaster_signals"]
+        room["broadcaster_signals"] = []
+        return {"signals": signals, "viewer_count": len(room["viewers"])}
+    else:
+        signals = room["viewer_signals"].get(user_id, [])
+        room["viewer_signals"][user_id] = []
+        return {"signals": signals}
+
+
+@router.post("/{stream_id}/signal/disconnect")
+async def signal_disconnect(stream_id: str, current_user: dict = Depends(get_current_user)):
+    """Disconnect from signaling."""
+    user_id = current_user['user_id']
+    room = _get_room(stream_id)
+    room["viewers"].discard(user_id)
+    room["viewer_signals"].pop(user_id, None)
+    return {"ok": True}
