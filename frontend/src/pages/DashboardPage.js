@@ -7,6 +7,8 @@ import { ReactionButton } from '../components/ReactionButton';
 import { Crown, MessageSquare, Users, TrendingUp, Plus, Settings, Loader2, Radio, Lock } from 'lucide-react';
 import { toast } from 'sonner';
 
+import { mediaUrl } from '../lib/media';
+
 export const DashboardPage = () => {
     const { user, isCreator, creatorProfile, api } = useAuth();
     const [subscriptions, setSubscriptions] = useState([]);
@@ -114,7 +116,7 @@ export const DashboardPage = () => {
                                         <div className="relative">
                                             <div className="w-12 h-12 rounded-full bg-gold/20 flex items-center justify-center overflow-hidden">
                                                 {item.creator_profile_image ? (
-                                                    <img src={item.creator_profile_image} alt="" className="w-full h-full object-cover" />
+                                                    <img src={mediaUrl(item.creator_profile_image)} alt="" className="w-full h-full object-cover" />
                                                 ) : (
                                                     <Crown className="w-6 h-6 text-gold" />
                                                 )}
@@ -147,13 +149,13 @@ export const DashboardPage = () => {
                                         <div className="rounded-sm overflow-hidden mb-4">
                                             {item.media_type === 'video' ? (
                                                 <video 
-                                                    src={item.media_urls[0]} 
+                                                    src={mediaUrl(item.media_urls[0])} 
                                                     className="w-full h-auto max-h-96 object-contain bg-black"
                                                     controls
                                                 />
                                             ) : (
                                                 <img 
-                                                    src={item.media_urls[0]} 
+                                                    src={mediaUrl(item.media_urls[0])} 
                                                     alt="" 
                                                     className="w-full h-auto max-h-96 object-contain"
                                                 />
@@ -236,7 +238,7 @@ export const DashboardPage = () => {
                                         <div key={sub.id} className="flex items-center gap-3">
                                             <div className="w-10 h-10 rounded-full bg-gold/20 flex items-center justify-center overflow-hidden">
                                                 {sub.creator_profile_image ? (
-                                                    <img src={sub.creator_profile_image} alt="" className="w-full h-full object-cover" />
+                                                    <img src={mediaUrl(sub.creator_profile_image)} alt="" className="w-full h-full object-cover" />
                                                 ) : (
                                                     <Crown className="w-5 h-5 text-gold" />
                                                 )}

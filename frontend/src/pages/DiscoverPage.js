@@ -4,13 +4,15 @@ import { Navbar } from '../components/Navbar';
 import { Crown, Users, Loader2, TrendingUp, Sparkles, Star, Hash, CheckCircle, Image } from 'lucide-react';
 import axios from 'axios';
 
+import { mediaUrl } from '../lib/media';
+
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const CreatorCard = ({ creator }) => (
     <Link to={`/creator/${creator.id}`} className="card-luxury overflow-hidden group flex-shrink-0 w-64 sm:w-auto">
         <div className="aspect-[3/4] relative overflow-hidden">
             {creator.profile_image_url ? (
-                <img src={creator.profile_image_url} alt={creator.display_name}
+                <img src={mediaUrl(creator.profile_image_url)} alt={creator.display_name}
                     className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
             ) : (
                 <div className="w-full h-full bg-gradient-to-br from-gold/20 to-transparent flex items-center justify-center">
@@ -205,7 +207,7 @@ export const DiscoverPage = () => {
                                         className="card-luxury overflow-hidden group">
                                         {item.media_urls?.length > 0 ? (
                                             <div className="aspect-video relative overflow-hidden">
-                                                <img src={item.media_urls[0]} alt={item.title || ''}
+                                                <img src={mediaUrl(item.media_urls[0])} alt={item.title || ''}
                                                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                                             </div>
                                         ) : (

@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { Search, X, Crown, Hash, Loader2 } from 'lucide-react';
 import axios from 'axios';
 
+import { mediaUrl } from '../lib/media';
+
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export const SearchBar = () => {
@@ -83,7 +85,7 @@ export const SearchBar = () => {
                                     onClick={() => { navigate(`/creator/${c.id}`); setShowDropdown(false); setQuery(''); }}
                                     className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/5 transition-colors text-left">
                                     {c.profile_image_url ? (
-                                        <img src={c.profile_image_url} alt="" className="w-8 h-8 rounded-full object-cover" />
+                                        <img src={mediaUrl(c.profile_image_url)} alt="" className="w-8 h-8 rounded-full object-cover" />
                                     ) : (
                                         <div className="w-8 h-8 rounded-full bg-gold/20 flex items-center justify-center">
                                             <Crown className="w-4 h-4 text-gold" />

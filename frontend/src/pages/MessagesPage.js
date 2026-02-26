@@ -6,6 +6,8 @@ import { MessageSquare, Send, Loader2, Check, CheckCheck, User } from 'lucide-re
 import { toast } from 'sonner';
 import { Avatar, AvatarFallback, AvatarImage } from '../components/ui/avatar';
 
+import { mediaUrl } from '../lib/media';
+
 export const MessagesPage = () => {
     const { user, api } = useAuth();
     const [searchParams] = useSearchParams();
@@ -165,7 +167,7 @@ export const MessagesPage = () => {
                                     data-testid={`conversation-${conv.other_user_id}`}
                                 >
                                     <Avatar className="w-12 h-12 border border-white/10">
-                                        <AvatarImage src={conv.other_user_avatar} />
+                                        <AvatarImage src={mediaUrl(conv.other_user_avatar)} />
                                         <AvatarFallback className="bg-obsidian text-gold">
                                             {conv.other_user_name?.[0]?.toUpperCase() || <User className="w-5 h-5" />}
                                         </AvatarFallback>
@@ -192,7 +194,7 @@ export const MessagesPage = () => {
                             {/* Chat Header */}
                             <div className="p-4 border-b border-white/10 flex items-center gap-3">
                                 <Avatar className="w-10 h-10 border border-white/10">
-                                    <AvatarImage src={selectedConversation.other_user_avatar} />
+                                    <AvatarImage src={mediaUrl(selectedConversation.other_user_avatar)} />
                                     <AvatarFallback className="bg-obsidian text-gold">
                                         {selectedConversation.other_user_name?.[0]?.toUpperCase() || <User className="w-5 h-5" />}
                                     </AvatarFallback>

@@ -13,6 +13,8 @@ import {
 } from '../components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 
+import { mediaUrl } from '../lib/media';
+
 export const CreatorDashboardPage = () => {
     const { user, creatorProfile, isCreator, api, updateCreator } = useAuth();
     const navigate = useNavigate();
@@ -405,13 +407,13 @@ export const CreatorDashboardPage = () => {
                                             <div className="mb-3 rounded overflow-hidden">
                                                 {item.media_type === 'video' ? (
                                                     <video 
-                                                        src={item.media_urls[0]} 
+                                                        src={mediaUrl(item.media_urls[0])} 
                                                         className="w-full h-40 object-cover"
                                                         controls
                                                     />
                                                 ) : (
                                                     <img 
-                                                        src={item.media_urls[0]} 
+                                                        src={mediaUrl(item.media_urls[0])} 
                                                         alt="" 
                                                         className="w-full h-40 object-cover"
                                                     />

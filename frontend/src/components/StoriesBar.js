@@ -7,6 +7,7 @@ import {
     Dialog,
     DialogContent,
 } from '../components/ui/dialog';
+import { mediaUrl } from '../lib/media';
 
 export const StoriesBar = () => {
     const { api, isCreator } = useAuth();
@@ -97,7 +98,7 @@ export const StoriesBar = () => {
                     >
                         <div className={`p-0.5 rounded-full ${creator.has_unseen ? 'bg-gradient-to-r from-gold to-gold-light' : 'bg-white/20'}`}>
                             <Avatar className="w-16 h-16 border-2 border-black">
-                                <AvatarImage src={creator.creator_profile_image} />
+                                <AvatarImage src={mediaUrl(creator.creator_profile_image)} />
                                 <AvatarFallback className="bg-obsidian text-gold">
                                     {creator.creator_display_name?.[0]}
                                 </AvatarFallback>
@@ -129,7 +130,7 @@ export const StoriesBar = () => {
                             <div className="absolute top-6 left-4 right-4 flex items-center justify-between z-20">
                                 <div className="flex items-center gap-3">
                                     <Avatar className="w-8 h-8 border border-white/30">
-                                        <AvatarImage src={currentCreator.creator_profile_image} />
+                                        <AvatarImage src={mediaUrl(currentCreator.creator_profile_image)} />
                                         <AvatarFallback className="bg-obsidian text-gold text-xs">
                                             {currentCreator.creator_display_name?.[0]}
                                         </AvatarFallback>
@@ -149,13 +150,13 @@ export const StoriesBar = () => {
                             {/* Story Content */}
                             {currentStory.media_type === 'image' ? (
                                 <img 
-                                    src={currentStory.media_url} 
+                                    src={mediaUrl(currentStory.media_url)} 
                                     alt=""
                                     className="w-full h-full object-cover"
                                 />
                             ) : (
                                 <video 
-                                    src={currentStory.media_url}
+                                    src={mediaUrl(currentStory.media_url)}
                                     autoPlay
                                     className="w-full h-full object-cover"
                                 />

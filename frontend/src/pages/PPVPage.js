@@ -12,6 +12,8 @@ import {
 } from '../components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 
+import { mediaUrl } from '../lib/media';
+
 export const PPVPage = () => {
     const { api, isCreator } = useAuth();
     const [inbox, setInbox] = useState([]);
@@ -132,7 +134,7 @@ export const PPVPage = () => {
                             <div key={msg.id} className="card-luxury p-6" data-testid={`ppv-msg-${msg.id}`}>
                                 <div className="flex items-start gap-4">
                                     <Avatar className="w-12 h-12 border border-gold/30">
-                                        <AvatarImage src={msg.sender_avatar} />
+                                        <AvatarImage src={mediaUrl(msg.sender_avatar)} />
                                         <AvatarFallback className="bg-obsidian text-gold">
                                             {msg.sender_name?.[0]}
                                         </AvatarFallback>

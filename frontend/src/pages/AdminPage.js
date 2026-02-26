@@ -26,6 +26,7 @@ import {
     BarChart,
     Bar
 } from 'recharts';
+import { mediaUrl } from '../lib/media';
 
 export const AdminPage = () => {
     const { isAdmin, isSuperAdmin, api } = useAuth();
@@ -443,7 +444,7 @@ export const AdminPage = () => {
                                             c.media_type === 'video' ? (
                                                 <div className="relative w-full h-full">
                                                     <video 
-                                                        src={c.media_urls[0]} 
+                                                        src={mediaUrl(c.media_urls[0])} 
                                                         className="w-full h-full object-cover"
                                                         muted
                                                     />
@@ -453,7 +454,7 @@ export const AdminPage = () => {
                                                 </div>
                                             ) : (
                                                 <img 
-                                                    src={c.media_urls[0]} 
+                                                    src={mediaUrl(c.media_urls[0])} 
                                                     alt="" 
                                                     className="w-full h-full object-cover group-hover:scale-105 transition-transform"
                                                 />
@@ -638,13 +639,13 @@ export const AdminPage = () => {
                                     <div className="rounded overflow-hidden bg-black">
                                         {selectedContent.media_type === 'video' ? (
                                             <video 
-                                                src={selectedContent.media_urls[0]} 
+                                                src={mediaUrl(selectedContent.media_urls[0])} 
                                                 className="w-full max-h-80 object-contain"
                                                 controls
                                             />
                                         ) : (
                                             <img 
-                                                src={selectedContent.media_urls[0]} 
+                                                src={mediaUrl(selectedContent.media_urls[0])} 
                                                 alt="" 
                                                 className="w-full max-h-80 object-contain"
                                             />

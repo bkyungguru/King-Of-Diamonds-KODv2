@@ -7,6 +7,8 @@ import { toast } from 'sonner';
 import { Avatar, AvatarFallback, AvatarImage } from '../components/ui/avatar';
 import SimplePeer from 'simple-peer';
 
+import { mediaUrl } from '../lib/media';
+
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
 const WS_BASE = BACKEND_URL.replace(/^http/, 'ws');
 
@@ -312,11 +314,19 @@ export const LiveStreamPage = () => {
                     try {
                         const previewStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
                         localStreamRef.current = previewStream;
-                        if (localVideoRef.current) {
-                            localVideoRef.current.srcObject = previewStream;
-                        }
+                        // Try setting immediately, and retry after DOM paints
+                        const setVideo = () => {
+                            if (localVideoRef.current && localStreamRef.current) {
+                                localVideoRef.current.srcObject = localStreamRef.current;
+                                localVideoRef.current.play().catch(() => {});
+                            }
+                        };
+                        setVideo();
+                        setTimeout(setVideo, 500);
+                        setTimeout(setVideo, 1500);
                     } catch (e) {
                         console.error('Camera preview failed:', e);
+                        toast.error('Could not access camera. Please allow camera permissions.');
                     }
                 } else {
                     await api().post(`/livestream/${streamId}/join`).catch(() => {});
@@ -350,6 +360,13 @@ export const LiveStreamPage = () => {
             }
         };
     }, [streamId]);
+
+    // Ensure video element gets the stream when both are ready
+    useEffect(() => {
+        if (isStreamer && localStreamRef.current && localVideoRef.current) {
+            localVideoRef.current.srcObject = localStreamRef.current;
+        }
+    }, [isStreamer, isLive, loading]);
 
     // Auto-scroll chat
     useEffect(() => {
@@ -494,7 +511,7 @@ export const LiveStreamPage = () => {
                     <div className="p-3 border-b border-white/10 flex items-center justify-between">
                         <div className="flex items-center gap-3">
                             <Avatar className="w-8 h-8 border border-gold/30">
-                                <AvatarImage src={stream?.creator_profile_image} />
+                                <AvatarImage src={mediaUrl(stream?.creator_profile_image)} />
                                 <AvatarFallback className="bg-obsidian text-gold text-xs">
                                     {stream?.creator_display_name?.[0]}
                                 </AvatarFallback>
@@ -534,13 +551,14 @@ export const LiveStreamPage = () => {
                             <div className="w-full h-full flex flex-col items-center justify-center p-6">
                                 {isLive && (
                                     <>
-                                        <div className="relative w-64 h-48 rounded-xl overflow-hidden border-2 border-gold/40 shadow-lg mb-6">
+                                        <div className="relative w-96 h-72 lg:w-[480px] lg:h-[360px] rounded-xl overflow-hidden border-2 border-gold/40 shadow-lg mb-6">
                                             <video
                                                 ref={localVideoRef}
                                                 autoPlay
                                                 muted
                                                 playsInline
-                                                className="w-full h-full object-cover"
+                                                className="w-full h-full object-cover mirror"
+                                                style={{ transform: 'scaleX(-1)' }}
                                             />
                                             <span className="absolute top-2 left-2 flex items-center gap-1 px-2 py-0.5 bg-red-500 text-white text-xs font-bold rounded-full animate-pulse">
                                                 <Radio className="w-2.5 h-2.5" /> LIVE
@@ -603,7 +621,8 @@ export const LiveStreamPage = () => {
                                             autoPlay
                                             muted
                                             playsInline
-                                            className="w-64 h-48 rounded-xl object-cover border-2 border-white/10 mb-6"
+                                            className="w-96 h-72 lg:w-[480px] lg:h-[360px] rounded-xl object-cover border-2 border-white/10 mb-6"
+                                            style={{ transform: 'scaleX(-1)' }}
                                         />
                                         <Video className="w-12 h-12 text-gold/50 mb-4" />
                                         <p className="text-white/70 mb-6">Ready to go live?</p>

@@ -11,6 +11,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from '../components/ui/dialog';
+import { mediaUrl } from '../lib/media';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -214,7 +215,7 @@ export const CreatorProfilePage = () => {
             <div className="h-64 md:h-80 relative">
                 {creator.cover_image_url ? (
                     <img
-                        src={creator.cover_image_url}
+                        src={mediaUrl(creator.cover_image_url)}
                         alt=""
                         className="w-full h-full object-cover"
                     />
@@ -231,7 +232,7 @@ export const CreatorProfilePage = () => {
                     <div className="w-32 h-32 md:w-40 md:h-40 rounded-full border-4 border-black overflow-hidden bg-obsidian flex-shrink-0">
                         {creator.profile_image_url ? (
                             <img
-                                src={creator.profile_image_url}
+                                src={mediaUrl(creator.profile_image_url)}
                                 alt={creator.display_name}
                                 className="w-full h-full object-cover"
                             />
@@ -361,13 +362,13 @@ export const CreatorProfilePage = () => {
                                                 <div className="rounded-sm overflow-hidden mb-4">
                                                     {item.media_type === 'video' ? (
                                                         <video 
-                                                            src={item.media_urls[0]} 
+                                                            src={mediaUrl(item.media_urls[0])} 
                                                             className="w-full h-auto max-h-96 object-contain bg-black"
                                                             controls
                                                         />
                                                     ) : (
                                                         <img
-                                                            src={item.media_urls[0]}
+                                                            src={mediaUrl(item.media_urls[0])}
                                                             alt=""
                                                             className="w-full h-auto max-h-96 object-contain"
                                                         />

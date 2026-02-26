@@ -4,6 +4,8 @@ import { Navbar } from '../components/Navbar';
 import { Crown, Users, Search, Loader2, CheckCircle } from 'lucide-react';
 import axios from 'axios';
 
+import { mediaUrl } from '../lib/media';
+
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export const ExplorePage = () => {
@@ -87,7 +89,7 @@ export const ExplorePage = () => {
                                 <div className="aspect-[3/4] relative overflow-hidden">
                                     {creator.profile_image_url ? (
                                         <img
-                                            src={creator.profile_image_url}
+                                            src={mediaUrl(creator.profile_image_url)}
                                             alt={creator.display_name}
                                             className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
                                         />

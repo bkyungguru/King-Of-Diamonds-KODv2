@@ -5,6 +5,8 @@ import { Navbar } from '../components/Navbar';
 import { Radio, Users, DollarSign, Crown, Loader2 } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '../components/ui/avatar';
 
+import { mediaUrl } from '../lib/media';
+
 export const LiveStreamsPage = () => {
     const { api } = useAuth();
     const [streams, setStreams] = useState([]);
@@ -65,7 +67,7 @@ export const LiveStreamsPage = () => {
                                 <div className="aspect-video relative bg-obsidian">
                                     {stream.thumbnail_url ? (
                                         <img
-                                            src={stream.thumbnail_url}
+                                            src={mediaUrl(stream.thumbnail_url)}
                                             alt={stream.title}
                                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                                         />
@@ -91,7 +93,7 @@ export const LiveStreamsPage = () => {
                                 <div className="p-4">
                                     <div className="flex items-center gap-3 mb-3">
                                         <Avatar className="w-10 h-10 border border-gold/30">
-                                            <AvatarImage src={stream.creator_profile_image} />
+                                            <AvatarImage src={mediaUrl(stream.creator_profile_image)} />
                                             <AvatarFallback className="bg-obsidian text-gold">
                                                 {stream.creator_display_name?.[0]}
                                             </AvatarFallback>

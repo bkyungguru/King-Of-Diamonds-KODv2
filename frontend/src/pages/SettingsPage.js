@@ -9,6 +9,8 @@ import { toast } from 'sonner';
 import { Avatar, AvatarFallback, AvatarImage } from '../components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 
+import { mediaUrl } from '../lib/media';
+
 export const SettingsPage = () => {
     const { user, creatorProfile, isCreator, updateUser, updateCreator, logout, api, refreshUser } = useAuth();
     const navigate = useNavigate();
@@ -133,7 +135,7 @@ export const SettingsPage = () => {
                             <div className="flex items-center gap-6 mb-8 pb-8 border-b border-white/10">
                                 <div className="relative group">
                                     <Avatar className="w-20 h-20 border-2 border-gold/30">
-                                        <AvatarImage src={user?.avatar_url} />
+                                        <AvatarImage src={mediaUrl(user?.avatar_url)} />
                                         <AvatarFallback className="bg-obsidian text-gold text-2xl">
                                             {user?.display_name?.[0] || user?.email?.[0]?.toUpperCase()}
                                         </AvatarFallback>
@@ -259,7 +261,7 @@ export const SettingsPage = () => {
                                         <div className="relative group">
                                             <div className="w-24 h-24 rounded-full overflow-hidden bg-obsidian border-2 border-gold/30">
                                                 {creatorProfile?.profile_image_url ? (
-                                                    <img src={creatorProfile.profile_image_url} alt="" className="w-full h-full object-cover" />
+                                                    <img src={mediaUrl(creatorProfile.profile_image_url)} alt="" className="w-full h-full object-cover" />
                                                 ) : (
                                                     <div className="w-full h-full flex items-center justify-center">
                                                         <Crown className="w-8 h-8 text-gold/50" />
@@ -279,7 +281,7 @@ export const SettingsPage = () => {
                                         <div className="relative group flex-1 min-w-[200px]">
                                             <div className="h-24 rounded overflow-hidden bg-obsidian border-2 border-gold/30">
                                                 {creatorProfile?.cover_image_url ? (
-                                                    <img src={creatorProfile.cover_image_url} alt="" className="w-full h-full object-cover" />
+                                                    <img src={mediaUrl(creatorProfile.cover_image_url)} alt="" className="w-full h-full object-cover" />
                                                 ) : (
                                                     <div className="w-full h-full flex items-center justify-center bg-gradient-to-r from-gold/10 to-transparent">
                                                         <span className="text-white/30 text-sm">Cover Image</span>

@@ -13,6 +13,8 @@ import {
 } from '../components/ui/dropdown-menu';
 import { Avatar, AvatarFallback, AvatarImage } from '../components/ui/avatar';
 
+import { mediaUrl } from '../lib/media';
+
 export const Navbar = () => {
     const { user, isAuthenticated, isCreator, isAdmin, logout } = useAuth();
     const navigate = useNavigate();
@@ -81,7 +83,7 @@ export const Navbar = () => {
                                 <DropdownMenuTrigger asChild>
                                     <button className="flex items-center gap-2 hover:opacity-80 transition-opacity" data-testid="user-menu-trigger">
                                         <Avatar className="w-9 h-9 border border-gold/30">
-                                            <AvatarImage src={user?.avatar_url} />
+                                            <AvatarImage src={mediaUrl(user?.avatar_url)} />
                                             <AvatarFallback className="bg-obsidian text-gold">
                                                 {user?.display_name?.[0] || user?.email?.[0]?.toUpperCase()}
                                             </AvatarFallback>
