@@ -169,9 +169,10 @@ async def end_stream(stream_id: str, current_user: dict = Depends(get_current_us
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Stream not found")
     
-    # Clean up ALL in-memory state
+    # Clean up ALL state
     active_streams.pop(stream_id, None)
-    _signal_rooms.pop(stream_id, None)
+    await db.signal_rooms.delete_one({"stream_id": stream_id})
+    await db.signal_queue.delete_many({"stream_id": stream_id})
     
     logger.info(f"Stream ended: {stream_id}")
     return {"message": "Stream ended"}
@@ -356,22 +357,65 @@ async def tip_during_stream(stream_id: str, body: TipBody, current_user: dict = 
     return {"message": "Tip sent!", "amount": body.amount}
 
 
-# ─── REST-based WebRTC Signaling ───
-# Cloudflare blocks WebSocket on Render free tier, so we use polling.
-# Structure: { stream_id: { "broadcaster_signals": [...], "viewer_signals": { viewer_id: [...] }, ... } }
+# ─── REST-based WebRTC Signaling (MongoDB-backed) ───
+# Cloudflare blocks WebSocket on Render free tier, so we use REST polling.
+# State is persisted in MongoDB so it survives Render free-tier cold starts.
+#
+# Collections used:
+#   signal_rooms   — one doc per stream: { stream_id, broadcaster_connected, broadcaster_user_id, viewers: [...] }
+#   signal_queue   — one doc per queued signal: { stream_id, target, signal, created_at }
+#                    target = "broadcaster" or a viewer user_id
+#                    TTL index on created_at (60s) auto-cleans stale signals
 
-_signal_rooms = {}
+_signal_indexes_created = False
 
-def _get_room(stream_id: str) -> dict:
-    if stream_id not in _signal_rooms:
-        _signal_rooms[stream_id] = {
-            "broadcaster_signals": [],
-            "viewer_signals": {},
+async def _ensure_signal_indexes():
+    """Create TTL index on signal_queue (idempotent)."""
+    global _signal_indexes_created
+    if _signal_indexes_created:
+        return
+    try:
+        await db.signal_queue.create_index("created_at", expireAfterSeconds=60)
+    except Exception:
+        pass  # index already exists
+    _signal_indexes_created = True
+
+
+async def _get_or_create_room(stream_id: str) -> dict:
+    room = await db.signal_rooms.find_one({"stream_id": stream_id}, {"_id": 0})
+    if not room:
+        room = {
+            "stream_id": stream_id,
             "broadcaster_connected": False,
             "broadcaster_user_id": None,
-            "viewers": set(),
+            "viewers": [],
         }
-    return _signal_rooms[stream_id]
+        await db.signal_rooms.insert_one(room)
+    return room
+
+
+async def _enqueue_signal(stream_id: str, target: str, signal: dict):
+    """Push a signal to the queue. target is 'broadcaster' or a viewer user_id."""
+    await _ensure_signal_indexes()
+    await db.signal_queue.insert_one({
+        "stream_id": stream_id,
+        "target": target,
+        "signal": signal,
+        "created_at": datetime.now(timezone.utc),
+    })
+
+
+async def _drain_signals(stream_id: str, target: str) -> list:
+    """Fetch and delete all queued signals for a target."""
+    cursor = db.signal_queue.find(
+        {"stream_id": stream_id, "target": target},
+        {"_id": 1, "signal": 1}
+    ).sort("created_at", 1)
+    docs = await cursor.to_list(200)
+    if docs:
+        ids = [d["_id"] for d in docs]
+        await db.signal_queue.delete_many({"_id": {"$in": ids}})
+    return [d["signal"] for d in docs]
 
 
 @router.post("/{stream_id}/signal/connect")
@@ -380,93 +424,79 @@ async def signal_connect(stream_id: str, current_user: dict = Depends(get_curren
     stream = await db.livestreams.find_one({"id": stream_id}, {"_id": 0})
     if not stream:
         raise HTTPException(status_code=404, detail="Stream not found")
-    
+
     user_id = current_user['user_id']
-    room = _get_room(stream_id)
-    
-    # BUG FIX: stream.creator_id is a creator profile ID, not a user ID.
-    # Must look up the creator profile by user_id and compare its id to stream.creator_id.
     is_broadcaster = await _is_broadcaster(user_id, stream)
-    
+    room = await _get_or_create_room(stream_id)
+
     if is_broadcaster:
-        room["broadcaster_connected"] = True
-        room["broadcaster_user_id"] = user_id
+        await db.signal_rooms.update_one(
+            {"stream_id": stream_id},
+            {"$set": {"broadcaster_connected": True, "broadcaster_user_id": user_id}}
+        )
         logger.info(f"[signal] Broadcaster connected: stream={stream_id} user={user_id}")
         # Notify all existing viewers that broadcaster is ready
-        for vid in room["viewers"]:
-            if vid not in room["viewer_signals"]:
-                room["viewer_signals"][vid] = []
-            room["viewer_signals"][vid].append({"type": "broadcaster-ready"})
-        return {"role": "broadcaster", "viewer_count": len(room["viewers"])}
+        for vid in room.get("viewers", []):
+            await _enqueue_signal(stream_id, vid, {"type": "broadcaster-ready"})
+        return {"role": "broadcaster", "viewer_count": len(room.get("viewers", []))}
     else:
-        room["viewers"].add(user_id)
-        if user_id not in room["viewer_signals"]:
-            room["viewer_signals"][user_id] = []
+        await db.signal_rooms.update_one(
+            {"stream_id": stream_id},
+            {"$addToSet": {"viewers": user_id}}
+        )
         # If broadcaster already connected, tell this viewer immediately
-        if room["broadcaster_connected"]:
-            room["viewer_signals"][user_id].append({"type": "broadcaster-ready"})
+        if room.get("broadcaster_connected"):
+            await _enqueue_signal(stream_id, user_id, {"type": "broadcaster-ready"})
         logger.info(f"[signal] Viewer connected: stream={stream_id} user={user_id}")
-        return {"role": "viewer", "broadcaster_ready": room["broadcaster_connected"]}
+        return {"role": "viewer", "broadcaster_ready": room.get("broadcaster_connected", False)}
 
 
 @router.post("/{stream_id}/signal/send")
 async def signal_send(stream_id: str, signal: SignalBody, current_user: dict = Depends(get_current_user)):
     """Send a signaling message (offer/answer/ice-candidate)."""
     user_id = current_user['user_id']
-    room = _get_room(stream_id)
     msg_type = signal.type
-    
+
     if msg_type == "offer":
-        # Viewer sends offer -> queue for broadcaster
-        room["broadcaster_signals"].append({
+        await _enqueue_signal(stream_id, "broadcaster", {
             "type": "offer",
             "offer": signal.offer,
             "viewer_id": user_id,
         })
-        logger.debug(f"[signal] offer from viewer {user_id} -> broadcaster (stream={stream_id})")
-    
+
     elif msg_type == "answer":
-        # Broadcaster sends answer -> queue for specific viewer
         viewer_id = signal.viewer_id
         if viewer_id:
-            if viewer_id not in room["viewer_signals"]:
-                room["viewer_signals"][viewer_id] = []
-            room["viewer_signals"][viewer_id].append({
+            await _enqueue_signal(stream_id, viewer_id, {
                 "type": "answer",
                 "answer": signal.answer,
             })
-            logger.debug(f"[signal] answer from broadcaster -> viewer {viewer_id} (stream={stream_id})")
         else:
             logger.warning(f"[signal] answer missing viewer_id from user {user_id}")
-    
+
     elif msg_type == "ice-candidate":
         candidate = signal.candidate
         target_viewer = signal.viewer_id
         if target_viewer:
-            # Broadcaster sending ICE to viewer
-            if target_viewer not in room["viewer_signals"]:
-                room["viewer_signals"][target_viewer] = []
-            room["viewer_signals"][target_viewer].append({
+            await _enqueue_signal(stream_id, target_viewer, {
                 "type": "ice-candidate",
                 "candidate": candidate,
             })
         else:
-            # Viewer sending ICE to broadcaster
-            room["broadcaster_signals"].append({
+            await _enqueue_signal(stream_id, "broadcaster", {
                 "type": "ice-candidate",
                 "candidate": candidate,
                 "viewer_id": user_id,
             })
-    
+
     elif msg_type == "renegotiate":
-        # Broadcaster requests viewer to renegotiate
         viewer_id = signal.viewer_id
-        if viewer_id and viewer_id in room["viewer_signals"]:
-            room["viewer_signals"][viewer_id].append({"type": "renegotiate"})
-    
+        if viewer_id:
+            await _enqueue_signal(stream_id, viewer_id, {"type": "renegotiate"})
+
     else:
         logger.warning(f"[signal] Unknown signal type '{msg_type}' from user {user_id}")
-    
+
     return {"ok": True}
 
 
@@ -474,29 +504,28 @@ async def signal_send(stream_id: str, signal: SignalBody, current_user: dict = D
 async def signal_poll(stream_id: str, current_user: dict = Depends(get_current_user)):
     """Poll for pending signaling messages. Returns and clears the queue."""
     user_id = current_user['user_id']
-    
-    if stream_id not in _signal_rooms:
+
+    room = await db.signal_rooms.find_one({"stream_id": stream_id}, {"_id": 0})
+    if not room:
         return {"signals": []}
-    
-    room = _signal_rooms[stream_id]
-    
+
     is_broadcaster = (room.get("broadcaster_user_id") == user_id)
     if not is_broadcaster:
-        # Fall back to DB check (first poll before connect, or reconnect)
         stream = await db.livestreams.find_one({"id": stream_id}, {"_id": 0})
         if stream:
             is_broadcaster = await _is_broadcaster(user_id, stream)
             if is_broadcaster:
-                room["broadcaster_user_id"] = user_id
-                room["broadcaster_connected"] = True
-    
+                await db.signal_rooms.update_one(
+                    {"stream_id": stream_id},
+                    {"$set": {"broadcaster_user_id": user_id, "broadcaster_connected": True}}
+                )
+
     if is_broadcaster:
-        signals = room["broadcaster_signals"]
-        room["broadcaster_signals"] = []
-        return {"signals": signals, "viewer_count": len(room["viewers"])}
+        signals = await _drain_signals(stream_id, "broadcaster")
+        viewer_count = len(room.get("viewers", []))
+        return {"signals": signals, "viewer_count": viewer_count}
     else:
-        signals = room["viewer_signals"].get(user_id, [])
-        room["viewer_signals"][user_id] = []
+        signals = await _drain_signals(stream_id, user_id)
         return {"signals": signals, "broadcaster_ready": room.get("broadcaster_connected", False)}
 
 
@@ -504,35 +533,37 @@ async def signal_poll(stream_id: str, current_user: dict = Depends(get_current_u
 async def signal_disconnect(stream_id: str, current_user: dict = Depends(get_current_user)):
     """Disconnect from signaling."""
     user_id = current_user['user_id']
-    
-    if stream_id not in _signal_rooms:
+
+    room = await db.signal_rooms.find_one({"stream_id": stream_id}, {"_id": 0})
+    if not room:
         return {"ok": True}
-    
-    room = _signal_rooms[stream_id]
-    
+
     if room.get("broadcaster_user_id") == user_id:
-        # Broadcaster disconnecting — notify all viewers, clean up room
         logger.info(f"[signal] Broadcaster disconnected: stream={stream_id}")
-        for vid in room["viewers"]:
-            if vid not in room["viewer_signals"]:
-                room["viewer_signals"][vid] = []
-            room["viewer_signals"][vid].append({"type": "stream-ended"})
-        room["broadcaster_connected"] = False
-        room["broadcaster_user_id"] = None
-        # Don't delete room yet — viewers need to poll the stream-ended message
+        for vid in room.get("viewers", []):
+            await _enqueue_signal(stream_id, vid, {"type": "stream-ended"})
+        await db.signal_rooms.update_one(
+            {"stream_id": stream_id},
+            {"$set": {"broadcaster_connected": False, "broadcaster_user_id": None}}
+        )
     else:
-        # Viewer disconnecting
-        room["viewers"].discard(user_id)
-        room["viewer_signals"].pop(user_id, None)
+        logger.info(f"[signal] Viewer {user_id} disconnected from stream {stream_id}")
+        await db.signal_rooms.update_one(
+            {"stream_id": stream_id},
+            {"$pull": {"viewers": user_id}}
+        )
         # Notify broadcaster that a viewer left
-        room["broadcaster_signals"].append({
+        await _enqueue_signal(stream_id, "broadcaster", {
             "type": "viewer-left",
             "viewer_id": user_id,
         })
-        logger.info(f"[signal] Viewer {user_id} disconnected from stream {stream_id}")
-    
+        # Clean up viewer's pending signals
+        await db.signal_queue.delete_many({"stream_id": stream_id, "target": user_id})
+
     # Clean up empty rooms
-    if not room["broadcaster_connected"] and len(room["viewers"]) == 0:
-        _signal_rooms.pop(stream_id, None)
-    
+    updated_room = await db.signal_rooms.find_one({"stream_id": stream_id}, {"_id": 0})
+    if updated_room and not updated_room.get("broadcaster_connected") and len(updated_room.get("viewers", [])) == 0:
+        await db.signal_rooms.delete_one({"stream_id": stream_id})
+        await db.signal_queue.delete_many({"stream_id": stream_id})
+
     return {"ok": True}
