@@ -537,7 +537,7 @@ export const LiveStreamPage = () => {
         if (!newMessage.trim()) return;
 
         try {
-            await api().post(`/livestream/${streamId}/chat?message=${encodeURIComponent(newMessage)}`);
+            await api().post(`/livestream/${streamId}/chat`, { message: newMessage });
         } catch (e) {
             console.error('Failed to send chat:', e);
         }
@@ -547,7 +547,7 @@ export const LiveStreamPage = () => {
 
     const sendTip = async () => {
         try {
-            await api().post(`/livestream/${streamId}/tip?amount=${tipAmount}`);
+            await api().post(`/livestream/${streamId}/tip`, { amount: tipAmount });
 
             const tipMsg = `Sent a $${tipAmount.toFixed(2)} tip! 💰`;
 
