@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Navbar } from '../components/Navbar';
 import { FileUpload } from '../components/FileUpload';
-import { Crown, Plus, Image, Video, FileText, Eye, EyeOff, Heart, DollarSign, Users, TrendingUp, Loader2, Trash2, Radio, Calendar, Lock, Send, Clock, Edit2, Globe, EyeOff as EyeOffIcon } from 'lucide-react';
+import { Crown, Plus, Image, Video, FileText, Eye, EyeOff, Heart, DollarSign, Users, TrendingUp, Loader2, Trash2, Radio, Calendar, Lock, Send, Clock, Edit2, Globe, X } from 'lucide-react';
 import { toast } from 'sonner';
 import {
     Dialog,

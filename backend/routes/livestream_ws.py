@@ -16,6 +16,7 @@ from typing import Dict, Set
 import json
 import logging
 import os
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -212,10 +213,9 @@ async def stream_websocket(websocket: WebSocket, stream_id: str, token: str = Qu
             # Broadcaster disconnected - auto-end the stream in DB
             if db:
                 try:
-                    from bson import ObjectId
                     await db.livestreams.update_one(
-                        {"_id": ObjectId(stream_id)},
-                        {"$set": {"status": "ended"}}
+                        {"id": stream_id},
+                        {"$set": {"status": "ended", "ended_at": datetime.now(timezone.utc).isoformat()}}
                     )
                     logger.info(f"Auto-ended stream {stream_id} (broadcaster disconnected)")
                 except Exception as e:

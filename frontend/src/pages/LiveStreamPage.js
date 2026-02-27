@@ -10,7 +10,6 @@ import SimplePeer from 'simple-peer';
 import { mediaUrl } from '../lib/media';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
-const WS_BASE = BACKEND_URL.replace(/^http/, 'ws');
 
 // ICE servers for NAT traversal
 // STUN + TURN via Metered.ca cloud (free 500MB/month, no home IP exposure)
@@ -113,6 +112,11 @@ export const LiveStreamPage = () => {
     // Stable function refs to avoid stale closures in polling intervals
     const sendSignalRef = useRef(null);
     const handleSignalingMessageRef = useRef(null);
+    // Track whether viewer peer creation is in progress to prevent duplicates
+    const viewerPeerCreatingRef = useRef(false);
+    // Reconnect attempt counter for viewer
+    const viewerReconnectRef = useRef(null);
+    const viewerReconnectCountRef = useRef(0);
 
     // Send signal via REST
     const sendSignal = useCallback(async (signal) => {
@@ -124,10 +128,27 @@ export const LiveStreamPage = () => {
     }, [streamId, api]);
     sendSignalRef.current = sendSignal;
 
+    // Cleanup all peer connections
+    const cleanupPeers = useCallback(() => {
+        Object.values(peersRef.current).forEach(p => {
+            try { p.destroy(); } catch (e) {}
+        });
+        peersRef.current = {};
+        if (peerRef.current) {
+            try { peerRef.current.destroy(); } catch (e) {}
+            peerRef.current = null;
+        }
+    }, []);
+
     // Viewer: create initiator peer with TURN servers
     const createViewerPeer = useCallback(() => {
+        // Prevent duplicate peer creation
+        if (viewerPeerCreatingRef.current) return;
+        viewerPeerCreatingRef.current = true;
+
         if (peerRef.current) {
-            peerRef.current.destroy();
+            try { peerRef.current.destroy(); } catch (e) {}
+            peerRef.current = null;
         }
 
         console.log('Creating viewer peer (initiator)');
@@ -148,23 +169,40 @@ export const LiveStreamPage = () => {
 
         peer.on('stream', (remoteStream) => {
             console.log('Received remote stream');
+            viewerReconnectCountRef.current = 0;
             setConnected(true);
             if (remoteVideoRef.current) {
                 remoteVideoRef.current.srcObject = remoteStream;
             }
         });
 
+        peer.on('connect', () => {
+            console.log('Peer connected');
+            viewerReconnectCountRef.current = 0;
+        });
+
         peer.on('error', (err) => {
             console.error('Peer error:', err);
+            viewerPeerCreatingRef.current = false;
             setConnected(false);
+            // Auto-reconnect with backoff (max 30s)
+            const delay = Math.min(2000 * Math.pow(2, viewerReconnectCountRef.current), 30000);
+            viewerReconnectCountRef.current++;
+            console.log(`Viewer reconnecting in ${delay}ms (attempt ${viewerReconnectCountRef.current})`);
+            if (viewerReconnectRef.current) clearTimeout(viewerReconnectRef.current);
+            viewerReconnectRef.current = setTimeout(() => {
+                createViewerPeer();
+            }, delay);
         });
 
         peer.on('close', () => {
             console.log('Peer closed');
+            viewerPeerCreatingRef.current = false;
             setConnected(false);
         });
 
         peerRef.current = peer;
+        viewerPeerCreatingRef.current = false;
     }, []);
 
     // Broadcaster: create answering peer for a viewer with TURN servers
@@ -177,7 +215,7 @@ export const LiveStreamPage = () => {
         }
 
         if (peersRef.current[viewerId]) {
-            peersRef.current[viewerId].destroy();
+            try { peersRef.current[viewerId].destroy(); } catch (e) {}
         }
 
         console.log(`Creating broadcaster peer for viewer ${viewerId}`);
@@ -199,13 +237,20 @@ export const LiveStreamPage = () => {
 
         peer.on('error', (err) => {
             console.error(`Peer error for viewer ${viewerId}:`, err);
+            delete peersRef.current[viewerId];
         });
 
         peer.on('close', () => {
             delete peersRef.current[viewerId];
         });
 
-        peer.signal(offer);
+        try {
+            peer.signal(offer);
+        } catch (e) {
+            console.error(`Failed to signal offer for viewer ${viewerId}:`, e);
+            try { peer.destroy(); } catch (e2) {}
+            return;
+        }
         peersRef.current[viewerId] = peer;
     }, []);
 
@@ -241,7 +286,11 @@ export const LiveStreamPage = () => {
 
             case 'answer':
                 if (peerRef.current && !peerRef.current.destroyed) {
-                    peerRef.current.signal(msg.answer);
+                    try {
+                        peerRef.current.signal(msg.answer);
+                    } catch (e) {
+                        console.error('Failed to signal answer:', e);
+                    }
                 }
                 break;
 
@@ -249,11 +298,11 @@ export const LiveStreamPage = () => {
                 if (role === 'broadcaster') {
                     const peer = peersRef.current[msg.viewer_id];
                     if (peer && !peer.destroyed) {
-                        peer.signal({ candidate: msg.candidate });
+                        try { peer.signal({ candidate: msg.candidate }); } catch (e) {}
                     }
                 } else {
                     if (peerRef.current && !peerRef.current.destroyed) {
-                        peerRef.current.signal({ candidate: msg.candidate });
+                        try { peerRef.current.signal({ candidate: msg.candidate }); } catch (e) {}
                     }
                 }
                 break;
@@ -281,7 +330,7 @@ export const LiveStreamPage = () => {
     handleSignalingMessageRef.current = handleSignalingMessage;
 
     // Connect signaling via REST polling (replaces WebSocket — Cloudflare blocks WS on Render free tier)
-    const connectWS = useCallback(async (role) => {
+    const connectWS = useCallback(async (role, streamIsLive = false) => {
         if (signalPollRef.current) return;
         currentRoleRef.current = role;
         setConnectionStatus('connecting');
@@ -292,6 +341,13 @@ export const LiveStreamPage = () => {
             console.log(`Signal connected as ${role}:`, res.data);
             setWsConnected(true);
             setConnectionStatus('connected');
+
+            // If viewer joining an already-live stream, immediately create peer
+            // (broadcaster-ready signal was sent in the past, we won't receive it)
+            if (role === 'viewer' && streamIsLive) {
+                console.log('Stream already live — creating viewer peer immediately');
+                createViewerPeer();
+            }
 
             // Start polling for signals — uses ref to always get latest handler
             signalPollRef.current = setInterval(async () => {
@@ -309,18 +365,9 @@ export const LiveStreamPage = () => {
         } catch (e) {
             console.error('Signal connect failed:', e);
             setConnectionStatus('error');
-            wsReconnectRef.current = setTimeout(() => connectWS(role), 5000);
+            wsReconnectRef.current = setTimeout(() => connectWS(role, streamIsLive), 5000);
         }
-    }, [streamId, api]);
-
-    const cleanupPeers = useCallback(() => {
-        Object.values(peersRef.current).forEach(p => p.destroy());
-        peersRef.current = {};
-        if (peerRef.current) {
-            peerRef.current.destroy();
-            peerRef.current = null;
-        }
-    }, []);
+    }, [streamId, api, createViewerPeer]);
 
     // Fetch stream info
     useEffect(() => {
@@ -334,6 +381,7 @@ export const LiveStreamPage = () => {
                 setIsLive(response.data.status === 'live');
 
                 const creatorRes = await api().get('/creators/me').catch(() => null);
+                const streamIsLive = response.data.status === 'live';
                 if (creatorRes?.data?.id === response.data.creator_id) {
                     setIsStreamer(true);
                     isStreamerRef.current = true;
@@ -355,12 +403,13 @@ export const LiveStreamPage = () => {
                         toast.error('Could not access camera. Please allow camera permissions.');
                     }
                     // Connect signaling AFTER camera is ready (or failed)
-                    connectWS('broadcaster');
-                    // Drain any offers that arrived before camera was ready
+                    await connectWS('broadcaster');
+                    // Drain any offers that arrived while camera was initializing
                     drainPendingOffers();
                 } else {
                     await api().post(`/livestream/${streamId}/join`).catch(() => {});
-                    connectWS('viewer');
+                    // Pass streamIsLive so viewer creates peer immediately for already-live streams
+                    connectWS('viewer', streamIsLive);
                 }
 
                 // Always start REST chat polling as fallback
@@ -380,6 +429,7 @@ export const LiveStreamPage = () => {
             stopChatPolling();
             if (localStreamRef.current) {
                 localStreamRef.current.getTracks().forEach(t => t.stop());
+                localStreamRef.current = null;
             }
             if (signalPollRef.current) {
                 clearInterval(signalPollRef.current);
@@ -387,6 +437,9 @@ export const LiveStreamPage = () => {
             }
             if (wsReconnectRef.current) {
                 clearTimeout(wsReconnectRef.current);
+            }
+            if (viewerReconnectRef.current) {
+                clearTimeout(viewerReconnectRef.current);
             }
             // Disconnect from signaling
             api().post(`/livestream/${streamId}/signal/disconnect`).catch(() => {});
@@ -479,16 +532,10 @@ export const LiveStreamPage = () => {
         }
     };
 
-    // Send chat — try WebSocket first, fall back to REST
+    // Send chat via REST
     const sendMessage = async () => {
         if (!newMessage.trim()) return;
 
-        const chatMsg = {
-            username: user?.display_name || user?.username || 'User',
-            message: newMessage,
-        };
-
-        // Send via REST
         try {
             await api().post(`/livestream/${streamId}/chat?message=${encodeURIComponent(newMessage)}`);
         } catch (e) {

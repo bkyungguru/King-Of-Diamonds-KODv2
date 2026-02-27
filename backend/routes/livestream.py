@@ -1,9 +1,13 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Body
 from models.livestream import LiveStream, LiveStreamCreate, LiveStreamResponse, StreamChatMessage
 from utils.auth import get_current_user
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
+from pydantic import BaseModel
 import uuid
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/livestream", tags=["Live Streaming"])
 
@@ -16,16 +20,40 @@ def set_db(database):
     global db
     db = database
 
+
+# ─── Request body models ───
+
+class ChatMessageBody(BaseModel):
+    message: str
+
+class TipBody(BaseModel):
+    amount: float
+    message: Optional[str] = None
+
+class SignalBody(BaseModel):
+    type: str
+    offer: Optional[dict] = None
+    answer: Optional[dict] = None
+    candidate: Optional[dict] = None
+    viewer_id: Optional[str] = None
+
+
+# ─── Helper: resolve if user is the broadcaster for a stream ───
+
+async def _is_broadcaster(user_id: str, stream: dict) -> bool:
+    """Check if user_id owns the stream via their creator profile."""
+    creator = await db.creators.find_one({"user_id": user_id}, {"_id": 0})
+    return creator is not None and creator.get("id") == stream.get("creator_id")
+
+
 @router.post("/create", response_model=LiveStreamResponse)
 async def create_stream(stream_data: LiveStreamCreate, current_user: dict = Depends(get_current_user)):
     """Create a new livestream session"""
     user_role = current_user.get('role', 'user')
     
-    # Check if user has a creator profile (creators, admins, superadmins can go live)
     creator = await db.creators.find_one({"user_id": current_user['user_id']}, {"_id": 0})
     
     if not creator:
-        # Auto-create creator profile for admins/superadmins
         if user_role in ['admin', 'superadmin']:
             user = await db.users.find_one({"id": current_user['user_id']}, {"_id": 0})
             creator = {
@@ -54,13 +82,22 @@ async def create_stream(stream_data: LiveStreamCreate, current_user: dict = Depe
         else:
             raise HTTPException(status_code=403, detail="Must be a creator to go live")
     
-    # Check if already has an active stream
+    # Check if already has an active stream (live OR offline/pending)
     existing = await db.livestreams.find_one({
         "creator_id": creator['id'],
-        "status": "live"
+        "status": {"$in": ["live", "offline"]}
     }, {"_id": 0})
     if existing:
-        raise HTTPException(status_code=400, detail="You already have an active stream")
+        if existing['status'] == 'live':
+            raise HTTPException(status_code=400, detail="You already have an active stream")
+        # Return existing offline stream instead of creating a new one
+        if isinstance(existing.get('created_at'), str):
+            existing['created_at'] = datetime.fromisoformat(existing['created_at'])
+        return LiveStreamResponse(
+            **existing,
+            creator_display_name=creator.get('display_name'),
+            creator_profile_image=creator.get('profile_image_url')
+        )
     
     stream = LiveStream(
         creator_id=creator['id'],
@@ -71,6 +108,7 @@ async def create_stream(stream_data: LiveStreamCreate, current_user: dict = Depe
     stream_dict = stream.model_dump()
     stream_dict['created_at'] = stream_dict['created_at'].isoformat()
     await db.livestreams.insert_one(stream_dict)
+    logger.info(f"Stream created: {stream.id} by creator {creator['id']}")
     
     return LiveStreamResponse(
         **stream.model_dump(),
@@ -80,7 +118,7 @@ async def create_stream(stream_data: LiveStreamCreate, current_user: dict = Depe
 
 @router.post("/{stream_id}/start")
 async def start_stream(stream_id: str, current_user: dict = Depends(get_current_user)):
-    """Start a livestream"""
+    """Start a livestream (transitions from offline to live)"""
     creator = await db.creators.find_one({"user_id": current_user['user_id']}, {"_id": 0})
     if not creator:
         raise HTTPException(status_code=403, detail="Must be a creator")
@@ -88,6 +126,13 @@ async def start_stream(stream_id: str, current_user: dict = Depends(get_current_
     stream = await db.livestreams.find_one({"id": stream_id, "creator_id": creator['id']}, {"_id": 0})
     if not stream:
         raise HTTPException(status_code=404, detail="Stream not found")
+    
+    if stream.get('status') == 'ended':
+        raise HTTPException(status_code=400, detail="Cannot restart an ended stream")
+    
+    if stream.get('status') == 'live':
+        # Already live — idempotent, just return the key
+        return {"message": "Stream already live", "stream_key": stream['stream_key']}
     
     await db.livestreams.update_one(
         {"id": stream_id},
@@ -103,6 +148,7 @@ async def start_stream(stream_id: str, current_user: dict = Depends(get_current_
         "chat": []
     }
     
+    logger.info(f"Stream started: {stream_id}")
     return {"message": "Stream started", "stream_key": stream['stream_key']}
 
 @router.post("/{stream_id}/end")
@@ -112,7 +158,7 @@ async def end_stream(stream_id: str, current_user: dict = Depends(get_current_us
     if not creator:
         raise HTTPException(status_code=403, detail="Must be a creator")
     
-    await db.livestreams.update_one(
+    result = await db.livestreams.update_one(
         {"id": stream_id, "creator_id": creator['id']},
         {"$set": {
             "status": "ended",
@@ -120,10 +166,14 @@ async def end_stream(stream_id: str, current_user: dict = Depends(get_current_us
         }}
     )
     
-    # Clean up in-memory state
-    if stream_id in active_streams:
-        del active_streams[stream_id]
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Stream not found")
     
+    # Clean up ALL in-memory state
+    active_streams.pop(stream_id, None)
+    _signal_rooms.pop(stream_id, None)
+    
+    logger.info(f"Stream ended: {stream_id}")
     return {"message": "Stream ended"}
 
 @router.get("/live", response_model=List[LiveStreamResponse])
@@ -133,10 +183,9 @@ async def get_live_streams():
     
     result = []
     for stream in streams:
-        if isinstance(stream.get('created_at'), str):
-            stream['created_at'] = datetime.fromisoformat(stream['created_at'])
-        if isinstance(stream.get('started_at'), str) and stream['started_at']:
-            stream['started_at'] = datetime.fromisoformat(stream['started_at'])
+        for field in ('created_at', 'started_at', 'ended_at'):
+            if isinstance(stream.get(field), str) and stream[field]:
+                stream[field] = datetime.fromisoformat(stream[field])
         
         creator = await db.creators.find_one({"id": stream['creator_id']}, {"_id": 0})
         
@@ -150,18 +199,14 @@ async def get_live_streams():
 
 @router.get("/{stream_id}", response_model=LiveStreamResponse)
 async def get_stream(stream_id: str):
-    """Get stream details. Auto-cleans stale 'live' streams if broadcaster is gone."""
+    """Get stream details"""
     stream = await db.livestreams.find_one({"id": stream_id}, {"_id": 0})
     if not stream:
         raise HTTPException(status_code=404, detail="Stream not found")
     
-    # Note: stale stream cleanup is handled by WebSocket disconnect handler in livestream_ws.py
-    # No cleanup here — avoids race conditions when broadcaster is still connecting
-    
-    if isinstance(stream.get('created_at'), str):
-        stream['created_at'] = datetime.fromisoformat(stream['created_at'])
-    if isinstance(stream.get('started_at'), str) and stream['started_at']:
-        stream['started_at'] = datetime.fromisoformat(stream['started_at'])
+    for field in ('created_at', 'started_at', 'ended_at'):
+        if isinstance(stream.get(field), str) and stream[field]:
+            stream[field] = datetime.fromisoformat(stream[field])
     
     creator = await db.creators.find_one({"id": stream['creator_id']}, {"_id": 0})
     
@@ -191,19 +236,22 @@ async def join_stream(stream_id: str, current_user: dict = Depends(get_current_u
         if not subscription:
             raise HTTPException(status_code=403, detail="Must be subscribed to watch")
     
-    # Update viewer count
-    if stream_id in active_streams:
-        active_streams[stream_id]["viewers"].add(user_id)
-        viewer_count = len(active_streams[stream_id]["viewers"])
-        
-        await db.livestreams.update_one(
-            {"id": stream_id},
-            {
-                "$set": {"viewer_count": viewer_count},
-                "$max": {"peak_viewers": viewer_count}
-            }
-        )
+    # Initialize active_streams if not yet (handles join before start race)
+    if stream_id not in active_streams:
+        active_streams[stream_id] = {"viewers": set(), "chat": []}
     
+    active_streams[stream_id]["viewers"].add(user_id)
+    viewer_count = len(active_streams[stream_id]["viewers"])
+    
+    await db.livestreams.update_one(
+        {"id": stream_id},
+        {
+            "$set": {"viewer_count": viewer_count},
+            "$max": {"peak_viewers": viewer_count}
+        }
+    )
+    
+    logger.info(f"Viewer {user_id} joined stream {stream_id} (count: {viewer_count})")
     return {"message": "Joined stream", "stream_key": stream.get('stream_key')}
 
 @router.post("/{stream_id}/leave")
@@ -219,11 +267,12 @@ async def leave_stream(stream_id: str, current_user: dict = Depends(get_current_
             {"id": stream_id},
             {"$set": {"viewer_count": viewer_count}}
         )
+        logger.info(f"Viewer {user_id} left stream {stream_id} (count: {viewer_count})")
     
     return {"message": "Left stream"}
 
 @router.post("/{stream_id}/chat")
-async def send_chat(stream_id: str, message: str, current_user: dict = Depends(get_current_user)):
+async def send_chat(stream_id: str, body: ChatMessageBody, current_user: dict = Depends(get_current_user)):
     """Send a chat message in a livestream"""
     user_id = current_user['user_id']
     
@@ -237,7 +286,7 @@ async def send_chat(stream_id: str, message: str, current_user: dict = Depends(g
         stream_id=stream_id,
         user_id=user_id,
         username=user.get('display_name') or user.get('username') or 'User',
-        message=message
+        message=body.message
     )
     
     chat_dict = chat_msg.model_dump()
@@ -247,7 +296,6 @@ async def send_chat(stream_id: str, message: str, current_user: dict = Depends(g
     # Add to in-memory chat
     if stream_id in active_streams:
         active_streams[stream_id]["chat"].append(chat_dict)
-        # Keep only last 100 messages in memory
         if len(active_streams[stream_id]["chat"]) > 100:
             active_streams[stream_id]["chat"] = active_streams[stream_id]["chat"][-100:]
     
@@ -269,54 +317,52 @@ async def get_chat(stream_id: str, since: str = None):
     return messages
 
 @router.post("/{stream_id}/tip")
-async def tip_during_stream(stream_id: str, amount: float, message: str = None, current_user: dict = Depends(get_current_user)):
-    """Send a tip during a livestream (MOCKED)"""
+async def tip_during_stream(stream_id: str, body: TipBody, current_user: dict = Depends(get_current_user)):
+    """Send a tip during a livestream"""
     user_id = current_user['user_id']
     
     stream = await db.livestreams.find_one({"id": stream_id, "status": "live"}, {"_id": 0})
     if not stream:
         raise HTTPException(status_code=404, detail="Stream not live")
     
-    if amount <= 0:
+    if body.amount <= 0:
         raise HTTPException(status_code=400, detail="Invalid tip amount")
     
     user = await db.users.find_one({"id": user_id}, {"_id": 0})
     
-    # Update stream tips
     await db.livestreams.update_one(
         {"id": stream_id},
-        {"$inc": {"total_tips": amount}}
+        {"$inc": {"total_tips": body.amount}}
     )
     
-    # Update creator earnings
     await db.creators.update_one(
         {"id": stream['creator_id']},
-        {"$inc": {"total_earnings": amount}}
+        {"$inc": {"total_earnings": body.amount}}
     )
     
-    # Add tip as chat message
     chat_msg = StreamChatMessage(
         stream_id=stream_id,
         user_id=user_id,
         username=user.get('display_name') or user.get('username') or 'User',
-        message=message or f"Sent a ${amount:.2f} tip!",
-        tip_amount=amount
+        message=body.message or f"Sent a ${body.amount:.2f} tip!",
+        tip_amount=body.amount
     )
     
     chat_dict = chat_msg.model_dump()
     chat_dict['created_at'] = chat_dict['created_at'].isoformat()
     await db.stream_chat.insert_one(chat_dict)
     
-    return {"message": "Tip sent!", "amount": amount}
+    logger.info(f"Tip ${body.amount:.2f} on stream {stream_id} from {user_id}")
+    return {"message": "Tip sent!", "amount": body.amount}
 
 
-# ─── REST-based WebRTC Signaling (Cloudflare blocks WebSocket on Render free tier) ───
+# ─── REST-based WebRTC Signaling ───
+# Cloudflare blocks WebSocket on Render free tier, so we use polling.
+# Structure: { stream_id: { "broadcaster_signals": [...], "viewer_signals": { viewer_id: [...] }, ... } }
 
-# In-memory signal queues per stream
-# Structure: { stream_id: { "broadcaster_signals": [...], "viewer_signals": { viewer_id: [...] }, "broadcaster_connected": bool } }
 _signal_rooms = {}
 
-def _get_room(stream_id):
+def _get_room(stream_id: str) -> dict:
     if stream_id not in _signal_rooms:
         _signal_rooms[stream_id] = {
             "broadcaster_signals": [],
@@ -338,18 +384,14 @@ async def signal_connect(stream_id: str, current_user: dict = Depends(get_curren
     user_id = current_user['user_id']
     room = _get_room(stream_id)
     
-    is_broadcaster = (stream.get('creator_id') == user_id) or \
-                     (await db.creators.find_one({"user_id": user_id, "id": stream.get('creator_id')})) is not None
-    
-    # Check by creator profile
-    if not is_broadcaster:
-        creator = await db.creators.find_one({"user_id": user_id}, {"_id": 0})
-        if creator and creator.get('id') == stream.get('creator_id'):
-            is_broadcaster = True
+    # BUG FIX: stream.creator_id is a creator profile ID, not a user ID.
+    # Must look up the creator profile by user_id and compare its id to stream.creator_id.
+    is_broadcaster = await _is_broadcaster(user_id, stream)
     
     if is_broadcaster:
         room["broadcaster_connected"] = True
         room["broadcaster_user_id"] = user_id
+        logger.info(f"[signal] Broadcaster connected: stream={stream_id} user={user_id}")
         # Notify all existing viewers that broadcaster is ready
         for vid in room["viewers"]:
             if vid not in room["viewer_signals"]:
@@ -360,39 +402,46 @@ async def signal_connect(stream_id: str, current_user: dict = Depends(get_curren
         room["viewers"].add(user_id)
         if user_id not in room["viewer_signals"]:
             room["viewer_signals"][user_id] = []
-        # If broadcaster already connected, tell this viewer
+        # If broadcaster already connected, tell this viewer immediately
         if room["broadcaster_connected"]:
             room["viewer_signals"][user_id].append({"type": "broadcaster-ready"})
+        logger.info(f"[signal] Viewer connected: stream={stream_id} user={user_id}")
         return {"role": "viewer", "broadcaster_ready": room["broadcaster_connected"]}
 
 
 @router.post("/{stream_id}/signal/send")
-async def signal_send(stream_id: str, signal: dict, current_user: dict = Depends(get_current_user)):
+async def signal_send(stream_id: str, signal: SignalBody, current_user: dict = Depends(get_current_user)):
     """Send a signaling message (offer/answer/ice-candidate)."""
     user_id = current_user['user_id']
     room = _get_room(stream_id)
-    msg_type = signal.get("type")
+    msg_type = signal.type
     
     if msg_type == "offer":
         # Viewer sends offer -> queue for broadcaster
         room["broadcaster_signals"].append({
             "type": "offer",
-            "offer": signal.get("offer"),
+            "offer": signal.offer,
             "viewer_id": user_id,
         })
+        logger.debug(f"[signal] offer from viewer {user_id} -> broadcaster (stream={stream_id})")
+    
     elif msg_type == "answer":
         # Broadcaster sends answer -> queue for specific viewer
-        viewer_id = signal.get("viewer_id")
+        viewer_id = signal.viewer_id
         if viewer_id:
             if viewer_id not in room["viewer_signals"]:
                 room["viewer_signals"][viewer_id] = []
             room["viewer_signals"][viewer_id].append({
                 "type": "answer",
-                "answer": signal.get("answer"),
+                "answer": signal.answer,
             })
+            logger.debug(f"[signal] answer from broadcaster -> viewer {viewer_id} (stream={stream_id})")
+        else:
+            logger.warning(f"[signal] answer missing viewer_id from user {user_id}")
+    
     elif msg_type == "ice-candidate":
-        candidate = signal.get("candidate")
-        target_viewer = signal.get("viewer_id")
+        candidate = signal.candidate
+        target_viewer = signal.viewer_id
         if target_viewer:
             # Broadcaster sending ICE to viewer
             if target_viewer not in room["viewer_signals"]:
@@ -409,6 +458,15 @@ async def signal_send(stream_id: str, signal: dict, current_user: dict = Depends
                 "viewer_id": user_id,
             })
     
+    elif msg_type == "renegotiate":
+        # Broadcaster requests viewer to renegotiate
+        viewer_id = signal.viewer_id
+        if viewer_id and viewer_id in room["viewer_signals"]:
+            room["viewer_signals"][viewer_id].append({"type": "renegotiate"})
+    
+    else:
+        logger.warning(f"[signal] Unknown signal type '{msg_type}' from user {user_id}")
+    
     return {"ok": True}
 
 
@@ -416,17 +474,21 @@ async def signal_send(stream_id: str, signal: dict, current_user: dict = Depends
 async def signal_poll(stream_id: str, current_user: dict = Depends(get_current_user)):
     """Poll for pending signaling messages. Returns and clears the queue."""
     user_id = current_user['user_id']
-    room = _get_room(stream_id)
     
-    # Check if this is the broadcaster (use stored ID from connect, fall back to DB)
+    if stream_id not in _signal_rooms:
+        return {"signals": []}
+    
+    room = _signal_rooms[stream_id]
+    
     is_broadcaster = (room.get("broadcaster_user_id") == user_id)
     if not is_broadcaster:
+        # Fall back to DB check (first poll before connect, or reconnect)
         stream = await db.livestreams.find_one({"id": stream_id}, {"_id": 0})
         if stream:
-            creator = await db.creators.find_one({"user_id": user_id}, {"_id": 0})
-            if creator and creator.get('id') == stream.get('creator_id'):
-                is_broadcaster = True
+            is_broadcaster = await _is_broadcaster(user_id, stream)
+            if is_broadcaster:
                 room["broadcaster_user_id"] = user_id
+                room["broadcaster_connected"] = True
     
     if is_broadcaster:
         signals = room["broadcaster_signals"]
@@ -435,14 +497,42 @@ async def signal_poll(stream_id: str, current_user: dict = Depends(get_current_u
     else:
         signals = room["viewer_signals"].get(user_id, [])
         room["viewer_signals"][user_id] = []
-        return {"signals": signals}
+        return {"signals": signals, "broadcaster_ready": room.get("broadcaster_connected", False)}
 
 
 @router.post("/{stream_id}/signal/disconnect")
 async def signal_disconnect(stream_id: str, current_user: dict = Depends(get_current_user)):
     """Disconnect from signaling."""
     user_id = current_user['user_id']
-    room = _get_room(stream_id)
-    room["viewers"].discard(user_id)
-    room["viewer_signals"].pop(user_id, None)
+    
+    if stream_id not in _signal_rooms:
+        return {"ok": True}
+    
+    room = _signal_rooms[stream_id]
+    
+    if room.get("broadcaster_user_id") == user_id:
+        # Broadcaster disconnecting — notify all viewers, clean up room
+        logger.info(f"[signal] Broadcaster disconnected: stream={stream_id}")
+        for vid in room["viewers"]:
+            if vid not in room["viewer_signals"]:
+                room["viewer_signals"][vid] = []
+            room["viewer_signals"][vid].append({"type": "stream-ended"})
+        room["broadcaster_connected"] = False
+        room["broadcaster_user_id"] = None
+        # Don't delete room yet — viewers need to poll the stream-ended message
+    else:
+        # Viewer disconnecting
+        room["viewers"].discard(user_id)
+        room["viewer_signals"].pop(user_id, None)
+        # Notify broadcaster that a viewer left
+        room["broadcaster_signals"].append({
+            "type": "viewer-left",
+            "viewer_id": user_id,
+        })
+        logger.info(f"[signal] Viewer {user_id} disconnected from stream {stream_id}")
+    
+    # Clean up empty rooms
+    if not room["broadcaster_connected"] and len(room["viewers"]) == 0:
+        _signal_rooms.pop(stream_id, None)
+    
     return {"ok": True}
