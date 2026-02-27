@@ -322,6 +322,7 @@ def _get_room(stream_id):
             "broadcaster_signals": [],
             "viewer_signals": {},
             "broadcaster_connected": False,
+            "broadcaster_user_id": None,
             "viewers": set(),
         }
     return _signal_rooms[stream_id]
@@ -348,6 +349,7 @@ async def signal_connect(stream_id: str, current_user: dict = Depends(get_curren
     
     if is_broadcaster:
         room["broadcaster_connected"] = True
+        room["broadcaster_user_id"] = user_id
         # Notify all existing viewers that broadcaster is ready
         for vid in room["viewers"]:
             if vid not in room["viewer_signals"]:
@@ -416,13 +418,15 @@ async def signal_poll(stream_id: str, current_user: dict = Depends(get_current_u
     user_id = current_user['user_id']
     room = _get_room(stream_id)
     
-    # Check if this is the broadcaster
-    stream = await db.livestreams.find_one({"id": stream_id}, {"_id": 0})
-    is_broadcaster = False
-    if stream:
-        creator = await db.creators.find_one({"user_id": user_id}, {"_id": 0})
-        if creator and creator.get('id') == stream.get('creator_id'):
-            is_broadcaster = True
+    # Check if this is the broadcaster (use stored ID from connect, fall back to DB)
+    is_broadcaster = (room.get("broadcaster_user_id") == user_id)
+    if not is_broadcaster:
+        stream = await db.livestreams.find_one({"id": stream_id}, {"_id": 0})
+        if stream:
+            creator = await db.creators.find_one({"user_id": user_id}, {"_id": 0})
+            if creator and creator.get('id') == stream.get('creator_id'):
+                is_broadcaster = True
+                room["broadcaster_user_id"] = user_id
     
     if is_broadcaster:
         signals = room["broadcaster_signals"]

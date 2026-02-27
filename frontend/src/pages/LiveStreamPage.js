@@ -107,6 +107,12 @@ export const LiveStreamPage = () => {
     // Signal polling ref
     const signalPollRef = useRef(null);
     const currentRoleRef = useRef(null);
+    // Pending offers queued before camera is ready (broadcaster)
+    const pendingOffersRef = useRef([]);
+
+    // Stable function refs to avoid stale closures in polling intervals
+    const sendSignalRef = useRef(null);
+    const handleSignalingMessageRef = useRef(null);
 
     // Send signal via REST
     const sendSignal = useCallback(async (signal) => {
@@ -116,40 +122,103 @@ export const LiveStreamPage = () => {
             console.error('Signal send failed:', e);
         }
     }, [streamId, api]);
+    sendSignalRef.current = sendSignal;
 
-    // Connect signaling via REST polling (replaces WebSocket — Cloudflare blocks WS on Render free tier)
-    const connectWS = useCallback(async (role) => {
-        if (signalPollRef.current) return;
-        currentRoleRef.current = role;
-        setConnectionStatus('connecting');
-
-        try {
-            // Register with signaling server
-            const res = await api().post(`/livestream/${streamId}/signal/connect`);
-            console.log(`Signal connected as ${role}:`, res.data);
-            setWsConnected(true);
-            setConnectionStatus('connected');
-
-            // Start polling for signals
-            signalPollRef.current = setInterval(async () => {
-                try {
-                    const pollRes = await api().get(`/livestream/${streamId}/signal/poll`);
-                    const signals = pollRes.data?.signals || [];
-                    if (pollRes.data?.viewer_count !== undefined) {
-                        setViewerCount(pollRes.data.viewer_count);
-                    }
-                    for (const msg of signals) {
-                        handleSignalingMessage(msg, role);
-                    }
-                } catch (e) {}
-            }, 1000); // Poll every 1s for low-latency signaling
-        } catch (e) {
-            console.error('Signal connect failed:', e);
-            setConnectionStatus('error');
-            // Retry after 5s
-            wsReconnectRef.current = setTimeout(() => connectWS(role), 5000);
+    // Viewer: create initiator peer with TURN servers
+    const createViewerPeer = useCallback(() => {
+        if (peerRef.current) {
+            peerRef.current.destroy();
         }
-    }, [streamId, api]);
+
+        console.log('Creating viewer peer (initiator)');
+        const peer = new SimplePeer({
+            initiator: true,
+            trickle: true,
+            config: { iceServers: ICE_SERVERS },
+        });
+
+        peer.on('signal', (data) => {
+            if (data.type === 'offer') {
+                console.log('Viewer sending offer');
+                sendSignalRef.current({ type: 'offer', offer: data });
+            } else if (data.candidate) {
+                sendSignalRef.current({ type: 'ice-candidate', candidate: data.candidate });
+            }
+        });
+
+        peer.on('stream', (remoteStream) => {
+            console.log('Received remote stream');
+            setConnected(true);
+            if (remoteVideoRef.current) {
+                remoteVideoRef.current.srcObject = remoteStream;
+            }
+        });
+
+        peer.on('error', (err) => {
+            console.error('Peer error:', err);
+            setConnected(false);
+        });
+
+        peer.on('close', () => {
+            console.log('Peer closed');
+            setConnected(false);
+        });
+
+        peerRef.current = peer;
+    }, []);
+
+    // Broadcaster: create answering peer for a viewer with TURN servers
+    const createBroadcasterPeer = useCallback((viewerId, offer) => {
+        // If camera not ready yet, queue the offer for later
+        if (!localStreamRef.current) {
+            console.log(`Camera not ready, queuing offer from ${viewerId}`);
+            pendingOffersRef.current.push({ viewerId, offer });
+            return;
+        }
+
+        if (peersRef.current[viewerId]) {
+            peersRef.current[viewerId].destroy();
+        }
+
+        console.log(`Creating broadcaster peer for viewer ${viewerId}`);
+        const peer = new SimplePeer({
+            initiator: false,
+            trickle: true,
+            stream: localStreamRef.current,
+            config: { iceServers: ICE_SERVERS },
+        });
+
+        peer.on('signal', (data) => {
+            if (data.type === 'answer') {
+                console.log(`Broadcaster sending answer to ${viewerId}`);
+                sendSignalRef.current({ type: 'answer', answer: data, viewer_id: viewerId });
+            } else if (data.candidate) {
+                sendSignalRef.current({ type: 'ice-candidate', candidate: data.candidate, viewer_id: viewerId });
+            }
+        });
+
+        peer.on('error', (err) => {
+            console.error(`Peer error for viewer ${viewerId}:`, err);
+        });
+
+        peer.on('close', () => {
+            delete peersRef.current[viewerId];
+        });
+
+        peer.signal(offer);
+        peersRef.current[viewerId] = peer;
+    }, []);
+
+    // Process any offers that were queued while camera was initializing
+    const drainPendingOffers = useCallback(() => {
+        if (!localStreamRef.current || pendingOffersRef.current.length === 0) return;
+        console.log(`Draining ${pendingOffersRef.current.length} pending offers`);
+        const pending = [...pendingOffersRef.current];
+        pendingOffersRef.current = [];
+        for (const { viewerId, offer } of pending) {
+            createBroadcasterPeer(viewerId, offer);
+        }
+    }, [createBroadcasterPeer]);
 
     // Handle signaling messages
     const handleSignalingMessage = useCallback((msg, role) => {
@@ -165,7 +234,7 @@ export const LiveStreamPage = () => {
                 break;
 
             case 'offer':
-                if (role === 'broadcaster' && localStreamRef.current) {
+                if (role === 'broadcaster') {
                     createBroadcasterPeer(msg.viewer_id, msg.offer);
                 }
                 break;
@@ -208,81 +277,41 @@ export const LiveStreamPage = () => {
             default:
                 break;
         }
-    }, []);
+    }, [createViewerPeer, createBroadcasterPeer, cleanupPeers]);
+    handleSignalingMessageRef.current = handleSignalingMessage;
 
-    // Viewer: create initiator peer with TURN servers
-    const createViewerPeer = useCallback(() => {
-        if (peerRef.current) {
-            peerRef.current.destroy();
+    // Connect signaling via REST polling (replaces WebSocket — Cloudflare blocks WS on Render free tier)
+    const connectWS = useCallback(async (role) => {
+        if (signalPollRef.current) return;
+        currentRoleRef.current = role;
+        setConnectionStatus('connecting');
+
+        try {
+            // Register with signaling server
+            const res = await api().post(`/livestream/${streamId}/signal/connect`);
+            console.log(`Signal connected as ${role}:`, res.data);
+            setWsConnected(true);
+            setConnectionStatus('connected');
+
+            // Start polling for signals — uses ref to always get latest handler
+            signalPollRef.current = setInterval(async () => {
+                try {
+                    const pollRes = await api().get(`/livestream/${streamId}/signal/poll`);
+                    const signals = pollRes.data?.signals || [];
+                    if (pollRes.data?.viewer_count !== undefined) {
+                        setViewerCount(pollRes.data.viewer_count);
+                    }
+                    for (const msg of signals) {
+                        handleSignalingMessageRef.current(msg, role);
+                    }
+                } catch (e) {}
+            }, 1000);
+        } catch (e) {
+            console.error('Signal connect failed:', e);
+            setConnectionStatus('error');
+            wsReconnectRef.current = setTimeout(() => connectWS(role), 5000);
         }
-
-        const peer = new SimplePeer({
-            initiator: true,
-            trickle: true,
-            config: { iceServers: ICE_SERVERS },
-        });
-
-        peer.on('signal', (data) => {
-            if (data.type === 'offer') {
-                sendSignal({ type: 'offer', offer: data });
-            } else if (data.candidate) {
-                sendSignal({ type: 'ice-candidate', candidate: data.candidate });
-            }
-        });
-
-        peer.on('stream', (remoteStream) => {
-            console.log('Received remote stream');
-            setConnected(true);
-            if (remoteVideoRef.current) {
-                remoteVideoRef.current.srcObject = remoteStream;
-            }
-        });
-
-        peer.on('error', (err) => {
-            console.error('Peer error:', err);
-            setConnected(false);
-        });
-
-        peer.on('close', () => {
-            console.log('Peer closed');
-            setConnected(false);
-        });
-
-        peerRef.current = peer;
-    }, []);
-
-    // Broadcaster: create answering peer for a viewer with TURN servers
-    const createBroadcasterPeer = useCallback((viewerId, offer) => {
-        if (peersRef.current[viewerId]) {
-            peersRef.current[viewerId].destroy();
-        }
-
-        const peer = new SimplePeer({
-            initiator: false,
-            trickle: true,
-            stream: localStreamRef.current,
-            config: { iceServers: ICE_SERVERS },
-        });
-
-        peer.on('signal', (data) => {
-            if (data.type === 'answer') {
-                sendSignal({ type: 'answer', answer: data, viewer_id: viewerId });
-            } else if (data.candidate) {
-                sendSignal({ type: 'ice-candidate', candidate: data.candidate, viewer_id: viewerId });
-            }
-        });
-
-        peer.on('error', (err) => {
-            console.error(`Peer error for viewer ${viewerId}:`, err);
-        });
-
-        peer.on('close', () => {
-            delete peersRef.current[viewerId];
-        });
-
-        peer.signal(offer);
-        peersRef.current[viewerId] = peer;
-    }, []);
+    }, [streamId, api]);
 
     const cleanupPeers = useCallback(() => {
         Object.values(peersRef.current).forEach(p => p.destroy());
@@ -308,12 +337,10 @@ export const LiveStreamPage = () => {
                 if (creatorRes?.data?.id === response.data.creator_id) {
                     setIsStreamer(true);
                     isStreamerRef.current = true;
-                    connectWS('broadcaster');
-                    // Start camera preview immediately so streamer can see themselves
+                    // Start camera FIRST so stream is ready before signaling connects
                     try {
                         const previewStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
                         localStreamRef.current = previewStream;
-                        // Try setting immediately, and retry after DOM paints
                         const setVideo = () => {
                             if (localVideoRef.current && localStreamRef.current) {
                                 localVideoRef.current.srcObject = localStreamRef.current;
@@ -327,6 +354,10 @@ export const LiveStreamPage = () => {
                         console.error('Camera preview failed:', e);
                         toast.error('Could not access camera. Please allow camera permissions.');
                     }
+                    // Connect signaling AFTER camera is ready (or failed)
+                    connectWS('broadcaster');
+                    // Drain any offers that arrived before camera was ready
+                    drainPendingOffers();
                 } else {
                     await api().post(`/livestream/${streamId}/join`).catch(() => {});
                     connectWS('viewer');
